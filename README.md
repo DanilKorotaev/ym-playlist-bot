@@ -80,12 +80,48 @@ cp .env.example .env
 
 #### Вариант 1: Использование Docker Compose (рекомендуется)
 
+**Установка Docker (если не установлен):**
+
+- **macOS:** Скачайте и установите [Docker Desktop for Mac](https://www.docker.com/products/docker-desktop)
+- **Linux:** 
+  ```bash
+  # Ubuntu/Debian
+  sudo apt update
+  sudo apt install docker.io docker-compose
+  sudo systemctl start docker
+  sudo systemctl enable docker
+  ```
+
+**Важно:** Перед использованием Docker Compose убедитесь, что Docker Desktop запущен.
+
+**На macOS:**
+- Откройте Docker Desktop приложение
+- Дождитесь полной загрузки (иконка Docker в строке меню должна быть активна)
+
+**Проверка работы Docker:**
+```bash
+docker ps
+# Если команда выполняется без ошибок, Docker работает
+# Если видите ошибку "Cannot connect to the Docker daemon", запустите Docker Desktop
+```
+
+**Запуск сервисов:**
 ```bash
 # Запустить PostgreSQL и pgAdmin
 docker-compose up -d postgres pgadmin
 ```
 
 PostgreSQL будет доступен на `localhost:5432`, pgAdmin на `http://localhost:5050` (логин: `admin@admin.com`, пароль: `admin`).
+
+**Остановка сервисов:**
+```bash
+docker-compose down
+```
+
+**Просмотр логов:**
+```bash
+docker-compose logs -f postgres
+```
 
 #### Вариант 2: Локальная установка PostgreSQL
 
