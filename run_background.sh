@@ -9,7 +9,7 @@ cd "$(dirname "$0")"
 source venv/bin/activate
 
 # Запускаем бота в фоне с логированием
-nohup python bot.py > bot.log 2>&1 &
+nohup python bot_v2.py > bot.log 2>&1 &
 
 echo "Бот запущен в фоне. PID: $!"
 echo "Логи сохраняются в bot.log"
