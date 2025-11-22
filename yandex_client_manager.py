@@ -6,7 +6,7 @@ import logging
 from typing import Optional, Dict
 from yandex_music import Client
 from yandex_music.exceptions import YandexMusicError
-from database import Database
+from database import DatabaseInterface
 
 logger = logging.getLogger(__name__)
 
@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 class YandexClientManager:
     """Менеджер клиентов Яндекс.Музыки."""
     
-    def __init__(self, default_token: str, db: Database):
+    def __init__(self, default_token: str, db: DatabaseInterface):
         self.db = db
         self.default_token = default_token
         self._default_client: Optional[Client] = None
@@ -97,16 +97,17 @@ class YandexClientManager:
         if not yandex_account_id:
             return self._default_client
         
-        # Получаем аккаунт из БД
-        conn = self.db.get_connection()
-        cursor = conn.cursor()
-        cursor.execute("SELECT telegram_id FROM yandex_accounts WHERE id = ?", (yandex_account_id,))
-        row = cursor.fetchone()
-        conn.close()
+        # Получаем аккаунт из БД по ID
+        account = self.db.get_yandex_account_by_id(yandex_account_id)
+        if not account:
+            return self._default_client
         
-        if row and row["telegram_id"]:
-            return self.get_client(row["telegram_id"])
+        # Если аккаунт привязан к пользователю, используем его клиент
+        telegram_id = account.get("telegram_id")
+        if telegram_id:
+            return self.get_client(telegram_id)
         
+        # Если это дефолтный аккаунт (telegram_id is None), используем дефолтный клиент
         return self._default_client
     
     def create_playlist(self, telegram_id: Optional[int], title: str) -> Optional[Dict]:
@@ -150,13 +151,8 @@ class YandexClientManager:
             import secrets
             share_token = secrets.token_urlsafe(16)
             
-            # Обновляем share_token
-            conn = self.db.get_connection()
-            cursor = conn.cursor()
-            cursor.execute("UPDATE playlists SET share_token = ?, title = ? WHERE id = ?", 
-                         (share_token, title, playlist_id))
-            conn.commit()
-            conn.close()
+            # Обновляем share_token и title через интерфейс
+            self.db.update_playlist(playlist_id, title=title, share_token=share_token)
             
             # Логируем действие
             if telegram_id:

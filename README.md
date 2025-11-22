@@ -51,12 +51,76 @@ cp .env.example .env
 - `TELEGRAM_TOKEN` - токен Telegram бота (получить у [@BotFather](https://t.me/BotFather))
 - `YANDEX_TOKEN` - токен Яндекс.Музыки (инструкция: https://yandex-music.readthedocs.io/en/main/token.html)
 
+**Настройка базы данных:**
+
+Выберите тип БД через переменную `DB_TYPE`:
+- `sqlite` (по умолчанию) - для локальной разработки
+- `postgresql` - для продакшена
+
+**Для SQLite (по умолчанию):**
+- `DB_FILE` - путь к файлу БД (по умолчанию: bot.db)
+
+**Для PostgreSQL:**
+- `DB_HOST` - хост PostgreSQL (по умолчанию: localhost)
+- `DB_PORT` - порт PostgreSQL (по умолчанию: 5432)
+- `DB_NAME` или `POSTGRES_DB` - имя базы данных (по умолчанию: yandex_music_bot)
+- `DB_USER` или `POSTGRES_USER` - пользователь PostgreSQL (по умолчанию: postgres)
+- `DB_PASSWORD` или `POSTGRES_PASSWORD` - пароль PostgreSQL (обязательно)
+
+**Для Docker Compose (опционально):**
+- `POSTGRES_USER` - пользователь PostgreSQL (по умолчанию: postgres)
+- `POSTGRES_PASSWORD` - пароль PostgreSQL (по умолчанию: postgres) ⚠️ **Измените в продакшене!**
+- `POSTGRES_DB` - имя базы данных (по умолчанию: yandex_music_bot)
+- `PGADMIN_DEFAULT_EMAIL` - email для входа в pgAdmin (по умолчанию: admin@admin.com)
+- `PGADMIN_DEFAULT_PASSWORD` - пароль для входа в pgAdmin (по умолчанию: admin) ⚠️ **Измените в продакшене!**
+
 > **Примечание**: Плейлисты создаются через бота командой `/create_playlist`. Переменные `PLAYLIST_OWNER_ID`, `PLAYLIST_ID`, `PLAYLIST_KIND` больше не требуются.
 
-### 5. Запуск бота
+### 5. Настройка PostgreSQL
+
+#### Вариант 1: Использование Docker Compose (рекомендуется)
+
+```bash
+# Запустить PostgreSQL и pgAdmin
+docker-compose up -d postgres pgadmin
+```
+
+PostgreSQL будет доступен на `localhost:5432`, pgAdmin на `http://localhost:5050` (логин: `admin@admin.com`, пароль: `admin`).
+
+#### Вариант 2: Локальная установка PostgreSQL
+
+Установите PostgreSQL на вашей системе и создайте базу данных:
+
+```bash
+# Ubuntu/Debian
+sudo apt install postgresql postgresql-contrib
+
+# Создать базу данных
+sudo -u postgres psql
+CREATE DATABASE yandex_music_bot;
+CREATE USER postgres WITH PASSWORD 'your_password';
+GRANT ALL PRIVILEGES ON DATABASE yandex_music_bot TO postgres;
+\q
+```
+
+Обновите переменные окружения в `.env` файле.
+
+### 6. Запуск бота
+
+#### Вариант 1: Обычный запуск
 
 ```bash
 python bot.py
+```
+
+#### Вариант 2: Запуск через Docker Compose
+
+```bash
+# Запустить все сервисы (bot + PostgreSQL + pgAdmin)
+docker-compose up -d
+
+# Просмотр логов
+docker-compose logs -f bot
 ```
 
 ## Развертывание на хостинге (Linux)
@@ -173,16 +237,22 @@ sudo systemctl restart liza-bot.service
 ```
 ym-playlist-bot/
 ├── bot.py                    # Основной файл бота
-├── database.py               # Работа с SQLite БД
-├── yandex_client_manager.py  # Управление клиентами Яндекс.Музыки
-├── stats.json                # Файл статистики (создается автоматически)
-├── bot.db                    # База данных SQLite (создается автоматически)
-├── requirements.txt          # Зависимости Python
-├── .env                      # Переменные окружения (не коммитится)
-├── .env.example              # Шаблон переменных окружения
-├── .gitignore                # Игнорируемые файлы для Git
-├── docs/                     # Документация
-└── README.md                 # Этот файл
+├── database/                  # Модуль работы с БД
+│   ├── __init__.py           # Фабрика для создания БД
+│   ├── base.py               # Абстрактный интерфейс DatabaseInterface
+│   ├── sqlite_db.py          # Реализация для SQLite
+│   └── postgresql_db.py      # Реализация для PostgreSQL
+├── yandex_client_manager.py   # Управление клиентами Яндекс.Музыки
+├── stats.json                 # Файл статистики (создается автоматически)
+├── bot.db                     # База данных SQLite (создается автоматически)
+├── docker-compose.yml         # Docker Compose конфигурация (PostgreSQL + pgAdmin + Bot)
+├── Dockerfile                 # Docker образ для бота
+├── requirements.txt           # Зависимости Python
+├── .env                       # Переменные окружения (не коммитится)
+├── .env.example               # Шаблон переменных окружения
+├── .gitignore                 # Игнорируемые файлы для Git
+├── docs/                      # Документация
+└── README.md                  # Этот файл
 ```
 
 ## Безопасность

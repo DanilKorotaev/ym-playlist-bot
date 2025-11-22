@@ -20,7 +20,7 @@ from telegram.ext import (
 from yandex_music import Client
 from yandex_music.exceptions import YandexMusicError
 
-from database import Database
+from database import create_database, DatabaseInterface
 from yandex_client_manager import YandexClientManager
 
 # Загружаем переменные окружения
@@ -46,7 +46,8 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # === Инициализация БД и менеджера клиентов ===
-db = Database()
+# Создаем БД на основе DB_TYPE из переменных окружения (по умолчанию: sqlite)
+db: DatabaseInterface = create_database()
 client_manager = YandexClientManager(YANDEX_TOKEN, db)
 
 # === Контекст пользователей (для хранения выбранного плейлиста) ===
