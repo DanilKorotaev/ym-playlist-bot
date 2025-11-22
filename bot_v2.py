@@ -30,11 +30,6 @@ load_dotenv()
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 YANDEX_TOKEN = os.getenv("YANDEX_TOKEN")
 
-# Для обратной совместимости (старый плейлист)
-PLAYLIST_OWNER_ID = os.getenv("PLAYLIST_OWNER_ID")
-PLAYLIST_ID = os.getenv("PLAYLIST_ID")
-PLAYLIST_KIND = os.getenv("PLAYLIST_KIND") or os.getenv("PLAYLIST_ID")
-
 # Проверка обязательных переменных
 if not TELEGRAM_TOKEN:
     raise ValueError("TELEGRAM_TOKEN не установлен в переменных окружения")
@@ -57,7 +52,7 @@ client_manager = YandexClientManager(YANDEX_TOKEN, db)
 # === Контекст пользователей (для хранения выбранного плейлиста) ===
 user_contexts: Dict[int, Dict] = {}  # {telegram_id: {"current_playlist_id": ...}}
 
-# === Статистика (для обратной совместимости) ===
+# === Статистика ===
 def load_stats() -> dict:
     if not os.path.exists(STATS_FILE):
         base = {
