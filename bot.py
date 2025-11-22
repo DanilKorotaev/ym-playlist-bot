@@ -41,11 +41,19 @@ if not PLAYLIST_KIND:
 STATS_FILE = "stats.json"
 
 # === Логирование ===
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
 logger = logging.getLogger(__name__)
 
 # === Инициализация клиента ===
-client = Client(YANDEX_TOKEN).init()
+try:
+    client = Client(YANDEX_TOKEN).init()
+    logger.info("Yandex Music клиент инициализирован")
+except Exception as e:
+    logger.error(f"Ошибка инициализации Yandex Music клиента: {e}")
+    raise
 
 # === Статистика в памяти / файле ===
 def load_stats() -> dict:
@@ -357,8 +365,10 @@ def find_track_index_in_playlist(track_ref) -> Optional[int]:
 # === Команды бота (добавление / удаление / статистика / list / link / start) ===
 
 def start(update: Update, context: CallbackContext):
-    kb = [["/start", "/link"], ["/list"]]
-    update.effective_message.reply_text(
+    logger.info(f"✅ Получена команда /start от пользователя {update.effective_user.id} (@{update.effective_user.username})")
+    try:
+        kb = [["/start", "/link"], ["/list"]]
+        update.effective_message.reply_text(
         "Привет! Я бот для управления плейлистом Яндекс.Музыки 🎵\n\n"
         "Доступные команды:\n"
         "/start — помощь\n"
@@ -366,9 +376,13 @@ def start(update: Update, context: CallbackContext):
         "/list — показать треки\n\n"
         "А также просто кидай ссылку на трек / плейлист / альбом, чтобы добавить.",
         reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True)
-    )
+        )
+        logger.info(f"✅ Ответ на /start отправлен пользователю {update.effective_user.id}")
+    except Exception as e:
+        logger.exception(f"❌ Ошибка при отправке ответа на /start: {e}")
 
 def add_command(update: Update, context: CallbackContext):
+    logger.info(f"Получено сообщение от {update.effective_user.id}: {update.effective_message.text[:100] if update.effective_message.text else 'без текста'}")
     text = (update.effective_message.text or "").strip()
     user = update.effective_user.username or str(update.effective_user.id)
 
@@ -501,20 +515,48 @@ def queen_lisa(update: Update, context: CallbackContext):
         return
     msg.reply_text("Не понял аргумент.")
 
+def error_handler(update: object, context: CallbackContext):
+    """Обработчик ошибок"""
+    logger.error(f"Ошибка при обработке обновления: {context.error}")
+    if update and hasattr(update, 'effective_message'):
+        try:
+            update.effective_message.reply_text("Произошла ошибка при обработке запроса.")
+        except:
+            pass
+
 def main():
-    updater = Updater(TELEGRAM_TOKEN, use_context=True)
-    dp = updater.dispatcher
+    try:
+        logger.info("Запуск бота...")
+        logger.info(f"TELEGRAM_TOKEN установлен: {'Да' if TELEGRAM_TOKEN else 'Нет'}")
+        
+        updater = Updater(TELEGRAM_TOKEN, use_context=True)
+        dp = updater.dispatcher
 
-    dp.add_handler(CommandHandler("start", start))
-    dp.add_handler(CommandHandler("list", show_list))
-    dp.add_handler(CommandHandler("link", link_command))
-    dp.add_handler(CommandHandler("statistics", statistics_command))
-    dp.add_handler(CommandHandler("queen_liza", queen_lisa, pass_args=True))
+        dp.add_error_handler(error_handler)
 
-    dp.add_handler(MessageHandler(Filters.text & ~Filters.command, add_command))
+        dp.add_handler(CommandHandler("start", start))
+        dp.add_handler(CommandHandler("list", show_list))
+        dp.add_handler(CommandHandler("link", link_command))
+        dp.add_handler(CommandHandler("statistics", statistics_command))
+        dp.add_handler(CommandHandler("queen_liza", queen_lisa, pass_args=True))
 
-    updater.start_polling()
-    updater.idle()
+        dp.add_handler(MessageHandler(Filters.text & ~Filters.command, add_command))
+
+        logger.info("Начинаю polling...")
+        logging.getLogger('telegram').setLevel(logging.DEBUG)
+        updater.start_polling(
+            drop_pending_updates=False,
+            timeout=10,
+            bootstrap_retries=3,
+            read_latency=2
+        )
+        logger.info("Бот запущен и готов к работе!")
+        logger.info("Ожидаю сообщения...")
+        logger.info(f"Бот @{updater.bot.get_me().username} готов принимать команды")
+        updater.idle()
+    except Exception as e:
+        logger.exception(f"Критическая ошибка при запуске бота: {e}")
+        raise
 
 if __name__ == "__main__":
     main()
