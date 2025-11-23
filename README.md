@@ -108,18 +108,82 @@ docker ps
 **Запуск сервисов:**
 ```bash
 # Запустить PostgreSQL и pgAdmin
+# На macOS/Linux с Docker Desktop используйте:
+docker compose up -d postgres pgadmin
+
+# Или если установлена старая версия docker-compose:
 docker-compose up -d postgres pgadmin
 ```
 
 PostgreSQL будет доступен на `localhost:5432`, pgAdmin на `http://localhost:5050` (логин: `admin@admin.com`, пароль: `admin`).
 
+**Подключение к базе данных через pgAdmin:**
+
+1. Откройте браузер и перейдите по адресу `http://localhost:5050`
+
+2. Войдите в pgAdmin:
+   - **Email:** `admin@admin.com` (или значение из `PGADMIN_DEFAULT_EMAIL` в `.env`)
+   - **Password:** `admin` (или значение из `PGADMIN_DEFAULT_PASSWORD` в `.env`)
+
+3. После входа добавьте новый сервер PostgreSQL:
+   - Правой кнопкой мыши нажмите на **"Servers"** в левой панели
+   - Выберите **"Register" → "Server..."**
+
+4. На вкладке **"General"**:
+   - **Name:** `Yandex Music Bot DB` (или любое удобное имя)
+
+5. На вкладке **"Connection"**:
+   - **Host name/address:** `postgres` (имя сервиса из docker-compose.yml)
+   - **Port:** `5432`
+   - **Maintenance database:** `yandex_music_bot` (или значение из `POSTGRES_DB` в `.env`)
+   - **Username:** `postgres` (или значение из `POSTGRES_USER` в `.env`)
+   - **Password:** `postgres` (или значение из `POSTGRES_PASSWORD` в `.env`)
+   - ✅ Отметьте **"Save password"** для удобства
+
+6. Нажмите **"Save"**
+
+7. Теперь вы можете:
+   - Просматривать все таблицы: разверните **Servers → Yandex Music Bot DB → Databases → yandex_music_bot → Schemas → public → Tables**
+   - Просматривать данные: правой кнопкой мыши на таблицу → **"View/Edit Data" → "All Rows"**
+   - Выполнять SQL-запросы: правой кнопкой мыши на базу данных → **"Query Tool"**
+
+**Доступные таблицы:**
+- `users` - пользователи Telegram
+- `yandex_accounts` - аккаунты Яндекс.Музыки
+- `playlists` - плейлисты
+- `playlist_access` - доступы к плейлистам
+- `actions` - история действий пользователей
+
+**Устранение ошибки `'ServerManager' object has no attribute 'user_info'`:**
+
+Если при подключении к серверу PostgreSQL в pgAdmin вы видите эту ошибку, это означает, что используется несовместимая версия pgAdmin. Проблема исправлена в `docker-compose.yml` (используется pgAdmin версии 8, совместимая с PostgreSQL 15).
+
+Если ошибка всё ещё возникает:
+
+1. Остановите и удалите старые контейнеры:
+```bash
+docker compose down
+docker compose rm -f pgadmin
+```
+
+2. Пересоздайте контейнеры с обновлённой конфигурацией:
+```bash
+docker compose up -d postgres pgadmin
+```
+
+3. Подождите несколько секунд, пока pgAdmin полностью запустится, затем обновите страницу в браузере.
+
 **Остановка сервисов:**
 ```bash
+docker compose down
+# или
 docker-compose down
 ```
 
 **Просмотр логов:**
 ```bash
+docker compose logs -f postgres
+# или
 docker-compose logs -f postgres
 ```
 
@@ -153,9 +217,13 @@ python bot.py
 
 ```bash
 # Запустить все сервисы (bot + PostgreSQL + pgAdmin)
+docker compose up -d
+# или если установлена старая версия:
 docker-compose up -d
 
 # Просмотр логов
+docker compose logs -f bot
+# или
 docker-compose logs -f bot
 ```
 
@@ -170,6 +238,32 @@ docker-compose logs -f bot
 sudo apt update
 sudo apt install python3 python3-pip python3-venv git
 ```
+
+3. Установите Docker и Docker Compose:
+
+```bash
+# Установка Docker
+sudo apt install docker.io docker-compose-plugin
+
+# Запуск и автозапуск Docker
+sudo systemctl start docker
+sudo systemctl enable docker
+
+# Добавьте вашего пользователя в группу docker (чтобы не использовать sudo)
+sudo usermod -aG docker $USER
+# Выйдите и войдите снова, чтобы изменения вступили в силу
+```
+
+**Важно:** На сервере используйте `docker compose` (V2) вместо `docker-compose` (V1). Старая версия `docker-compose` может вызывать ошибки совместимости.
+
+Если у вас установлена старая версия `docker-compose`, удалите её:
+
+```bash
+# Удаление старой версии docker-compose
+sudo apt remove docker-compose
+```
+
+Используйте команду `docker compose` (без дефиса) вместо `docker-compose`.
 
 ### Клонирование и настройка
 
@@ -205,6 +299,122 @@ python bot.py
 ```
 
 Если все работает, остановите бота (Ctrl+C).
+
+### Использование Docker Compose на сервере
+
+Если вы хотите использовать Docker Compose для запуска PostgreSQL и pgAdmin на сервере:
+
+1. Создайте файл `.env` с переменными окружения (если еще не создан):
+
+```bash
+nano .env
+```
+
+Добавьте необходимые переменные (см. раздел "Настройка переменных окружения" выше).
+
+2. Запустите PostgreSQL и pgAdmin:
+
+```bash
+# Используйте docker compose (V2) вместо docker-compose
+docker compose up -d postgres pgadmin
+```
+
+3. Проверьте статус контейнеров:
+
+```bash
+docker compose ps
+```
+
+4. Просмотр логов:
+
+```bash
+docker compose logs -f postgres
+```
+
+5. Остановка сервисов:
+
+```bash
+docker compose down
+```
+
+**Примечание:** Если вы получаете ошибку `Not supported URL scheme http+docker`, это означает, что используется старая версия `docker-compose`. Удалите её и используйте `docker compose` (V2):
+
+```bash
+sudo apt remove docker-compose
+docker compose up -d postgres pgadmin
+```
+
+### Настройка firewall для доступа к портам
+
+На сервере обычно включен firewall (ufw), который блокирует входящие соединения. Чтобы pgAdmin был доступен снаружи, нужно открыть порт 5050.
+
+**⚠️ ВАЖНО: Безопасность**
+
+- **НЕ открывайте порт 5432 (PostgreSQL) наружу** — это небезопасно! База данных должна быть доступна только внутри сервера или через VPN.
+- Откройте порт 5050 (pgAdmin) только если вам действительно нужен внешний доступ к веб-интерфейсу.
+- Если pgAdmin нужен только для локальной работы, используйте SSH туннель (см. ниже).
+
+#### Вариант 1: Открыть порт pgAdmin (5050) для внешнего доступа
+
+```bash
+# Проверьте статус firewall
+sudo ufw status
+
+# Откройте порт 5050 для pgAdmin
+sudo ufw allow 5050/tcp
+
+# Если firewall не активен, активируйте его
+sudo ufw enable
+```
+
+После этого pgAdmin будет доступен по адресу `http://ваш_сервер_ip:5050`
+
+**⚠️ Обязательно измените пароль по умолчанию в `.env` файле!**
+
+**Подключение к базе данных через pgAdmin на сервере:**
+
+1. Откройте браузер и перейдите по адресу `http://ваш_сервер_ip:5050` (или `http://localhost:5050` если используете SSH туннель)
+
+2. Войдите в pgAdmin:
+   - **Email:** значение из `PGADMIN_DEFAULT_EMAIL` в `.env` (по умолчанию: `admin@admin.com`)
+   - **Password:** значение из `PGADMIN_DEFAULT_PASSWORD` в `.env` (по умолчанию: `admin`)
+
+3. После входа добавьте новый сервер PostgreSQL:
+   - Правой кнопкой мыши нажмите на **"Servers"** в левой панели
+   - Выберите **"Register" → "Server..."**
+
+4. На вкладке **"General"**:
+   - **Name:** `Yandex Music Bot DB` (или любое удобное имя)
+
+5. На вкладке **"Connection"**:
+   - **Host name/address:** `postgres` (имя сервиса из docker-compose.yml)
+   - **Port:** `5432`
+   - **Maintenance database:** значение из `POSTGRES_DB` в `.env` (по умолчанию: `yandex_music_bot`)
+   - **Username:** значение из `POSTGRES_USER` в `.env` (по умолчанию: `postgres`)
+   - **Password:** значение из `POSTGRES_PASSWORD` в `.env` (по умолчанию: `postgres`)
+   - ✅ Отметьте **"Save password"** для удобства
+
+6. Нажмите **"Save"**
+
+7. Теперь вы можете просматривать все таблицы и данные базы данных (см. инструкции выше в разделе "Подключение к базе данных через pgAdmin")
+
+#### Вариант 2: Использовать SSH туннель (рекомендуется для безопасности)
+
+Вместо открытия порта наружу, используйте SSH туннель с вашего локального компьютера:
+
+```bash
+# На вашем локальном компьютере выполните:
+ssh -L 5050:localhost:5050 user@your_server_ip
+```
+
+После этого pgAdmin будет доступен на вашем локальном компьютере по адресу `http://localhost:5050`, но соединение будет зашифровано через SSH.
+
+**Примечание о PostgreSQL:** Порт 5432 (PostgreSQL) не нужно открывать в firewall — база данных должна быть доступна только внутри сервера. Если вам нужно подключиться к PostgreSQL с вашего компьютера, используйте SSH туннель:
+
+```bash
+# На вашем локальном компьютере:
+ssh -L 5432:localhost:5432 user@your_server_ip
+```
 
 ### Настройка systemd для автозапуска
 
