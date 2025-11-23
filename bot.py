@@ -9,6 +9,8 @@ import logging
 import time
 import urllib.parse
 import secrets
+import signal
+import sys
 from typing import Any, List, Tuple, Optional, Union, Dict
 from dotenv import load_dotenv
 
@@ -44,6 +46,10 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+# Подавляем некритичные предупреждения
+logging.getLogger('telegram.utils.request').setLevel(logging.ERROR)
+logging.getLogger('apscheduler').setLevel(logging.ERROR)
 
 # === Инициализация БД и менеджера клиентов ===
 # Создаем БД на основе DB_TYPE из переменных окружения (по умолчанию: sqlite)
@@ -859,13 +865,31 @@ def error_handler(update: object, context: CallbackContext):
         except:
             pass
 
+# Глобальная переменная для хранения updater (нужна для обработки сигналов)
+_updater_instance = None
+
+def signal_handler(signum, frame):
+    """Обработчик сигналов для корректного завершения."""
+    logger.info(f"Получен сигнал {signum}, завершаю работу бота...")
+    if _updater_instance:
+        _updater_instance.stop()
+        _updater_instance.is_idle = False
+    sys.exit(0)
+
 def main():
     """Главная функция."""
+    global _updater_instance
+    
     try:
+        # Регистрируем обработчики сигналов для корректного завершения в Docker
+        signal.signal(signal.SIGTERM, signal_handler)
+        signal.signal(signal.SIGINT, signal_handler)
+        
         logger.info("Запуск бота...")
         logger.info(f"TELEGRAM_TOKEN установлен: {'Да' if TELEGRAM_TOKEN else 'Нет'}")
         
-        updater = Updater(TELEGRAM_TOKEN, use_context=True)
+        _updater_instance = Updater(TELEGRAM_TOKEN, use_context=True)
+        updater = _updater_instance
         dp = updater.dispatcher
         
         dp.add_error_handler(error_handler)
@@ -898,6 +922,10 @@ def main():
         logger.info("Бот запущен и готов к работе!")
         logger.info(f"Бот @{updater.bot.get_me().username} готов принимать команды")
         updater.idle()
+    except KeyboardInterrupt:
+        logger.info("Получен сигнал прерывания, завершаю работу...")
+        if _updater_instance:
+            _updater_instance.stop()
     except Exception as e:
         logger.exception(f"Критическая ошибка при запуске бота: {e}")
         raise
