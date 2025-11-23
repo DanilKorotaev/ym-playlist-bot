@@ -489,7 +489,6 @@ ym-playlist-bot/
 │   ├── sqlite_db.py          # Реализация для SQLite
 │   └── postgresql_db.py      # Реализация для PostgreSQL
 ├── yandex_client_manager.py   # Управление клиентами Яндекс.Музыки
-├── stats.json                 # Файл статистики (создается автоматически)
 ├── bot.db                     # База данных SQLite (создается автоматически)
 ├── docker-compose.yml         # Docker Compose конфигурация (PostgreSQL + pgAdmin + Bot)
 ├── Dockerfile                 # Docker образ для бота

@@ -6,7 +6,6 @@ import re
 import os
 import json
 import logging
-import time
 import urllib.parse
 import secrets
 import signal
@@ -38,8 +37,6 @@ if not TELEGRAM_TOKEN:
 if not YANDEX_TOKEN:
     raise ValueError("YANDEX_TOKEN не установлен в переменных окружения")
 
-STATS_FILE = "stats.json"
-
 # === Логирование ===
 logging.basicConfig(
     level=logging.INFO,
@@ -64,24 +61,6 @@ WAITING_PLAYLIST_NAME = 1
 WAITING_TOKEN = 2
 WAITING_EDIT_NAME = 3
 WAITING_TRACK_NUMBER = 4
-
-# === Статистика ===
-def load_stats() -> dict:
-    if not os.path.exists(STATS_FILE):
-        base = {
-            "users": {},
-            "links_count": {"track": 0, "playlist": 0, "album": 0},
-            "commands": {},
-            "total_messages": 0
-        }
-        save_stats(base)
-        return base
-    with open(STATS_FILE, "r", encoding="utf-8") as f:
-        return json.load(f)
-
-def save_stats(obj: dict):
-    with open(STATS_FILE, "w", encoding="utf-8") as f:
-        json.dump(obj, f, ensure_ascii=False, indent=2)
 
 # === Вспомогательные функции для UX ===
 def get_main_menu_keyboard():
@@ -138,28 +117,6 @@ def cancel_operation(update: Update, context: CallbackContext) -> int:
         reply_markup=get_main_menu_keyboard()
     )
     return ConversationHandler.END
-
-def record_message_stats(update: Update, kind: str, added_count: int = 0, removed_count: int = 0):
-    stats = load_stats()
-    user = update.effective_user
-    uid = str(user.id)
-    if uid not in stats["users"]:
-        stats["users"][uid] = {"username": user.username or "", "added": 0, "removed": 0, "messages": []}
-    stats["total_messages"] = stats.get("total_messages", 0) + 1
-    stats["users"][uid]["messages"].append({
-        "time": int(time.time()),
-        "text": update.effective_message.text if update.effective_message else "",
-        "kind": kind,
-        "added": added_count,
-        "removed": removed_count
-    })
-    if added_count:
-        stats["users"][uid]["added"] = stats["users"][uid].get("added", 0) + added_count
-    if removed_count:
-        stats["users"][uid]["removed"] = stats["users"][uid].get("removed", 0) + removed_count
-    if kind in stats.get("links_count", {}):
-        stats["links_count"][kind] = stats["links_count"].get(kind, 0) + 1
-    save_stats(stats)
 
 # === Парсеры ссылок ===
 def parse_track_link(link: str) -> Optional[Any]:
@@ -1132,7 +1089,6 @@ def delete_track_start(update: Update, context: CallbackContext) -> int:
         ok, err = delete_track_api(playlist_id, from_idx, to_idx, telegram_id)
         
         if ok:
-            record_message_stats(update, kind="delete_track", removed_count=1)
             update.effective_message.reply_text(
                 f"✅ Трек №{index} «{track_title}» удалён из плейлиста.",
                 reply_markup=get_main_menu_keyboard()
@@ -1324,7 +1280,6 @@ def delete_track_input(update: Update, context: CallbackContext) -> int:
     ok, err = delete_track_api(playlist_id, from_idx, to_idx, telegram_id)
     
     if ok:
-        record_message_stats(update, kind="delete_track", removed_count=1)
         track_info = f"«{track_title}»"
         if artist_line:
             track_info += f" — {artist_line}"
@@ -1398,7 +1353,6 @@ def add_command(update: Update, context: CallbackContext):
             album_obj = track_obj.albums[0]
             ok, err = insert_track_api(playlist_id, track_obj.id, album_obj.id, telegram_id)
             if ok:
-                record_message_stats(update, kind="track", added_count=1)
                 artists = ", ".join([a.name for a in track_obj.artists]) if track_obj.artists else ""
                 artist_text = f" — {artists}" if artists else ""
                 update.effective_message.reply_text(
@@ -1443,7 +1397,6 @@ def add_command(update: Update, context: CallbackContext):
             if ok:
                 added += 1
         
-        record_message_stats(update, kind="playlist", added_count=added)
         if added > 0:
             update.effective_message.reply_text(
                 f"✅ Добавлено {added} из {total} треков в «{playlist_title}»."
@@ -1478,7 +1431,6 @@ def add_command(update: Update, context: CallbackContext):
             if ok:
                 added += 1
         
-        record_message_stats(update, kind="album", added_count=added)
         if added > 0:
             update.effective_message.reply_text(
                 f"✅ Добавлено {added} из {total} треков из альбома в «{playlist_title}»."
