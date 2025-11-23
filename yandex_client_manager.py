@@ -3,37 +3,116 @@
 Поддерживает дефолтный клиент и клиенты пользователей.
 """
 import logging
+import time
 from typing import Optional, Dict
 from yandex_music import Client
-from yandex_music.exceptions import YandexMusicError
+from yandex_music.exceptions import YandexMusicError, TimedOutError
 from database import DatabaseInterface
 
 logger = logging.getLogger(__name__)
+
+# Константы для таймаутов и повторов
+DEFAULT_TIMEOUT = 30  # секунды
+MAX_RETRIES = 3
+RETRY_DELAY = 2  # секунды между попытками
 
 
 class YandexClientManager:
     """Менеджер клиентов Яндекс.Музыки."""
     
-    def __init__(self, default_token: str, db: DatabaseInterface):
+    def __init__(self, default_token: str, db: DatabaseInterface, timeout: int = DEFAULT_TIMEOUT):
         self.db = db
         self.default_token = default_token
+        self.timeout = timeout
         self._default_client: Optional[Client] = None
         self._user_clients: Dict[int, Client] = {}
-        
-        # Инициализируем дефолтный клиент
-        self._init_default_client()
+        self._default_client_initialized = False
         
         # Сохраняем дефолтный токен в БД
         self.db.set_default_yandex_account(default_token)
+        
+        # Пытаемся инициализировать дефолтный клиент, но не падаем при ошибке
+        # Клиент будет инициализирован лениво при первом использовании
+        try:
+            self._init_default_client()
+        except Exception as e:
+            logger.warning(
+                f"Не удалось инициализировать дефолтный клиент при старте: {e}. "
+                f"Клиент будет инициализирован при первом использовании."
+            )
+    
+    def _create_client_with_timeout(self, token: str) -> Client:
+        """Создать клиент с настройками таймаута."""
+        # yandex-music Client может принимать timeout через различные параметры
+        # Пробуем разные варианты, если один не работает, используем дефолтный
+        try:
+            # Попытка 1: request_timeout (наиболее вероятный вариант)
+            client = Client(token, request_timeout=self.timeout)
+            return client
+        except TypeError:
+            # Если request_timeout не поддерживается, пробуем timeout
+            try:
+                client = Client(token, timeout=self.timeout)
+                return client
+            except TypeError:
+                # Если и timeout не работает, создаем клиент без параметра
+                # Таймаут будет обрабатываться на уровне retry логики
+                logger.debug(f"Параметр timeout не поддерживается, используем дефолтные настройки")
+                return Client(token)
+    
+    def _init_client_with_retry(self, token: str, max_retries: int = MAX_RETRIES) -> Client:
+        """Инициализировать клиент с повторными попытками."""
+        last_error = None
+        
+        for attempt in range(max_retries):
+            try:
+                client = self._create_client_with_timeout(token)
+                client.init()
+                return client
+            except (TimedOutError, TimeoutError, ConnectionError, OSError) as e:
+                last_error = e
+                if attempt < max_retries - 1:
+                    wait_time = RETRY_DELAY * (2 ** attempt)  # Экспоненциальная задержка
+                    logger.warning(
+                        f"Попытка {attempt + 1}/{max_retries} инициализации клиента не удалась "
+                        f"(таймаут). Повтор через {wait_time}с..."
+                    )
+                    time.sleep(wait_time)
+                else:
+                    logger.error(f"Все {max_retries} попытки инициализации клиента не удались")
+            except Exception as e:
+                # Для других ошибок не повторяем
+                logger.error(f"Ошибка инициализации клиента (не таймаут): {e}")
+                raise
+        
+        # Если все попытки не удались
+        raise last_error or Exception("Неизвестная ошибка инициализации клиента")
     
     def _init_default_client(self):
         """Инициализировать дефолтный клиент."""
+        if self._default_client_initialized and self._default_client is not None:
+            return
+        
         try:
-            self._default_client = Client(self.default_token).init()
+            self._default_client = self._init_client_with_retry(self.default_token)
+            self._default_client_initialized = True
             logger.info("Дефолтный клиент Яндекс.Музыки инициализирован")
         except Exception as e:
             logger.error(f"Ошибка инициализации дефолтного клиента: {e}")
+            self._default_client_initialized = False
             raise
+    
+    def _ensure_default_client(self):
+        """Убедиться, что дефолтный клиент инициализирован."""
+        if not self._default_client_initialized or self._default_client is None:
+            try:
+                self._init_default_client()
+            except Exception as e:
+                logger.error(f"Не удалось инициализировать дефолтный клиент: {e}")
+                raise RuntimeError(
+                    "Дефолтный клиент Яндекс.Музыки не инициализирован. "
+                    "Проверьте токен и сетевое подключение."
+                )
     
     def get_client(self, telegram_id: Optional[int] = None) -> Client:
         """
@@ -41,11 +120,13 @@ class YandexClientManager:
         Если telegram_id не указан или у пользователя нет своего токена, возвращает дефолтный.
         """
         if telegram_id is None:
+            self._ensure_default_client()
             return self._default_client
         
         # Проверяем, есть ли у пользователя свой токен
         user_token = self.db.get_user_yandex_token(telegram_id)
         if not user_token:
+            self._ensure_default_client()
             return self._default_client
         
         # Если клиент уже создан, возвращаем его
@@ -54,13 +135,14 @@ class YandexClientManager:
         
         # Создаем новый клиент для пользователя
         try:
-            client = Client(user_token).init()
+            client = self._init_client_with_retry(user_token)
             self._user_clients[telegram_id] = client
             logger.info(f"Клиент Яндекс.Музыки для пользователя {telegram_id} инициализирован")
             return client
         except Exception as e:
             logger.error(f"Ошибка инициализации клиента для пользователя {telegram_id}: {e}")
             # В случае ошибки возвращаем дефолтный клиент
+            self._ensure_default_client()
             return self._default_client
     
     def set_user_token(self, telegram_id: int, token: str) -> bool:
@@ -70,7 +152,7 @@ class YandexClientManager:
         """
         try:
             # Проверяем валидность токена, создавая временный клиент
-            test_client = Client(token).init()
+            test_client = self._init_client_with_retry(token)
             # Если успешно, сохраняем токен
             self.db.set_user_yandex_token(telegram_id, token)
             # Обновляем кэш клиентов
@@ -91,15 +173,18 @@ class YandexClientManager:
         """
         playlist = self.db.get_playlist(playlist_id)
         if not playlist:
+            self._ensure_default_client()
             return self._default_client
         
         yandex_account_id = playlist.get("yandex_account_id")
         if not yandex_account_id:
+            self._ensure_default_client()
             return self._default_client
         
         # Получаем аккаунт из БД по ID
         account = self.db.get_yandex_account_by_id(yandex_account_id)
         if not account:
+            self._ensure_default_client()
             return self._default_client
         
         # Если аккаунт привязан к пользователю, используем его клиент
@@ -108,6 +193,7 @@ class YandexClientManager:
             return self.get_client(telegram_id)
         
         # Если это дефолтный аккаунт (telegram_id is None), используем дефолтный клиент
+        self._ensure_default_client()
         return self._default_client
     
     def create_playlist(self, telegram_id: Optional[int], title: str) -> Optional[Dict]:
@@ -120,7 +206,20 @@ class YandexClientManager:
         try:
             # Получаем UID аккаунта
             if not hasattr(client, "me") or not client.me:
-                client.init()
+                try:
+                    client.init()
+                except Exception as e:
+                    logger.error(f"Ошибка при повторной инициализации клиента: {e}")
+                    # Пытаемся пересоздать клиент
+                    if telegram_id:
+                        if telegram_id in self._user_clients:
+                            del self._user_clients[telegram_id]
+                        client = self.get_client(telegram_id)
+                    else:
+                        self._default_client_initialized = False
+                        self._default_client = None
+                        self._init_default_client()
+                        client = self._default_client
             
             uid = str(client.me.account.uid)
             

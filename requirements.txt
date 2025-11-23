@@ -3,4 +3,5 @@ yandex-music==2.2.0
 python-dotenv==1.0.0
 urllib3<2.0
 psycopg2-binary==2.9.9
+setuptools<81
 
