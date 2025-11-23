@@ -2,7 +2,9 @@
 Сервис для работы с API Яндекс.Музыки.
 Предоставляет высокоуровневые методы для получения треков, альбомов и плейлистов.
 """
+import json
 import logging
+import urllib.parse
 from typing import List, Optional, Tuple, Any
 from yandex_music import Client
 from yandex_music.exceptions import YandexMusicError
@@ -130,4 +132,111 @@ class YandexService:
         
         tracks = getattr(pl_obj, "tracks", []) or []
         return tracks
+    
+    def insert_track_to_playlist(
+        self,
+        playlist_kind: str,
+        track_id: Any,
+        album_id: Any,
+        owner_id: str,
+        at: int = 0,
+        max_retries: int = 2
+    ) -> Tuple[bool, Optional[str]]:
+        """
+        Добавить трек в плейлист через API Яндекс.Музыки.
+        Автоматически получает актуальную revision и делает повторные попытки при ошибках.
+        
+        Args:
+            playlist_kind: ID плейлиста (kind)
+            track_id: ID трека
+            album_id: ID альбома
+            owner_id: ID владельца плейлиста
+            at: Позиция для вставки (по умолчанию 0 - в начало)
+            max_retries: Максимальное количество попыток при ошибке revision
+            
+        Returns:
+            Кортеж (успех, сообщение об ошибке)
+        """
+        for attempt in range(max_retries):
+            try:
+                # Получаем плейлист с актуальной revision
+                pl = self.client.users_playlists(playlist_kind, owner_id)
+                if pl is None:
+                    return False, "Не удалось получить плейлист."
+                
+                revision = getattr(pl, "revision", 1)
+                
+                # Пытаемся добавить трек
+                self.client.users_playlists_insert_track(
+                    playlist_kind, track_id, album_id,
+                    at=at, revision=revision, user_id=owner_id
+                )
+                return True, None
+            except Exception as e:
+                error_msg = str(e).lower()
+                logger.debug(f"Попытка {attempt + 1}/{max_retries}: ошибка вставки трека: {e}")
+                
+                # Если ошибка связана с revision и есть еще попытки, повторяем
+                if ("wrong-revision" in error_msg or "revision" in error_msg) and attempt < max_retries - 1:
+                    continue
+                
+                # Другая ошибка или все попытки исчерпаны
+                return False, f"Ошибка вставки: {e}"
+        
+        return False, "Не удалось добавить трек после нескольких попыток"
+    
+    def delete_track_from_playlist(
+        self,
+        playlist_kind: str,
+        owner_id: str,
+        from_idx: int,
+        to_idx: int,
+        max_retries: int = 2
+    ) -> Tuple[bool, Optional[str]]:
+        """
+        Удалить трек из плейлиста через API Яндекс.Музыки.
+        Автоматически получает актуальную revision и делает повторные попытки при ошибках.
+        
+        Args:
+            playlist_kind: ID плейлиста (kind)
+            owner_id: ID владельца плейлиста
+            from_idx: Начальный индекс (0-based)
+            to_idx: Конечный индекс (0-based)
+            max_retries: Максимальное количество попыток при ошибке revision
+            
+        Returns:
+            Кортеж (успех, сообщение об ошибке)
+        """
+        for attempt in range(max_retries):
+            try:
+                # Получаем плейлист с актуальной revision
+                pl = self.client.users_playlists(playlist_kind, owner_id)
+                if pl is None:
+                    return False, "Не удалось получить плейлист."
+                
+                revision = getattr(pl, "revision", 1)
+                
+                # Формируем diff для удаления
+                diff = [{"op": "delete", "from": from_idx, "to": to_idx}]
+                diff_str = json.dumps(diff, ensure_ascii=False).replace(" ", "")
+                diff_encoded = urllib.parse.quote(diff_str, safe="")
+                url = f"{self.client.base_url}/users/{owner_id}/playlists/{playlist_kind}/change-relative?diff={diff_encoded}&revision={revision}"
+                result = self.client._request.post(url)
+                
+                if result:
+                    return True, None
+                else:
+                    return False, "Запрос выполнен, но ответ пустой."
+            except Exception as e:
+                error_msg = str(e).lower()
+                logger.debug(f"Попытка {attempt + 1}/{max_retries}: ошибка удаления трека: {e}")
+                
+                # Если ошибка связана с revision и есть еще попытки, повторяем
+                if ("wrong-revision" in error_msg or "revision" in error_msg) and attempt < max_retries - 1:
+                    continue
+                
+                # Другая ошибка или все попытки исчерпаны
+                return False, f"Ошибка удаления: {e}"
+        
+        return False, "Не удалось удалить трек после нескольких попыток"
 

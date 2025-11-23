@@ -2,14 +2,12 @@
 Сервис для работы с плейлистами.
 Содержит бизнес-логику добавления и удаления треков из плейлистов.
 """
-import json
 import logging
-import urllib.parse
-from typing import Tuple, Optional, Any, Dict
-from yandex_music import Client
+from typing import Tuple, Optional, Any
 
 from database import DatabaseInterface
 from yandex_client_manager import YandexClientManager
+from .yandex_service import YandexService
 
 logger = logging.getLogger(__name__)
 
@@ -55,29 +53,24 @@ class PlaylistService:
         if not self.db.check_playlist_access(playlist_id, telegram_id, need_add=True):
             return False, "У вас нет прав на добавление треков в этот плейлист."
         
+        # Получаем клиент и создаем сервис для работы с API
         client = self.client_manager.get_client_for_playlist(playlist_id)
-        last_err = None
+        yandex_service = YandexService(client)
         
-        for attempt in range(2):
-            try:
-                pl = client.users_playlists(playlist["playlist_kind"], playlist["owner_id"])
-                if pl is None:
-                    return False, "Не удалось получить плейлист."
-                revision = getattr(pl, "revision", 1)
-                client.users_playlists_insert_track(
-                    playlist["playlist_kind"], track_id, album_id, 
-                    at=0, revision=revision, user_id=playlist["owner_id"]
-                )
-                # Логируем действие
-                self.db.log_action(telegram_id, "track_added", playlist_id, f"track_id={track_id}")
-                return True, None
-            except Exception as e:
-                last_err = e
-                msg = str(e).lower()
-                logger.debug(f"insert attempt failed: {e}")
-                if "wrong-revision" in msg or "revision" in msg:
-                    continue
-        return False, f"Ошибка вставки: {last_err}"
+        playlist_kind = playlist["playlist_kind"]
+        owner_id = playlist["owner_id"]
+        
+        # Вызываем метод API - он сам получит revision и сделает повторные попытки
+        ok, error = yandex_service.insert_track_to_playlist(
+            playlist_kind, track_id, album_id, owner_id
+        )
+        
+        if ok:
+            # Логируем действие
+            self.db.log_action(telegram_id, "track_added", playlist_id, f"track_id={track_id}")
+            return True, None
+        
+        return False, error or "Ошибка вставки трека"
     
     def delete_track(
         self, 
@@ -106,30 +99,24 @@ class PlaylistService:
         if not self.db.check_playlist_access(playlist_id, telegram_id, need_edit=True):
             return False, "У вас нет прав на удаление треков из этого плейлиста."
         
+        # Получаем клиент и создаем сервис для работы с API
         client = self.client_manager.get_client_for_playlist(playlist_id)
-        last_err = None
+        yandex_service = YandexService(client)
         
-        for attempt in range(2):
-            try:
-                pl = client.users_playlists(playlist["playlist_kind"], playlist["owner_id"])
-                if pl is None:
-                    return False, "Не удалось получить плейлист."
-                revision = getattr(pl, "revision", 1)
-                diff = [{"op": "delete", "from": from_idx, "to": to_idx}]
-                diff_str = json.dumps(diff, ensure_ascii=False).replace(" ", "")
-                diff_encoded = urllib.parse.quote(diff_str, safe="")
-                url = f"{client.base_url}/users/{playlist['owner_id']}/playlists/{playlist['playlist_kind']}/change-relative?diff={diff_encoded}&revision={revision}"
-                result = client._request.post(url)
-                # Логируем действие
-                self.db.log_action(telegram_id, "track_deleted", playlist_id, f"from={from_idx}, to={to_idx}")
-                return True, "Трек успешно удалён." if result else "Запрос выполнен, но ответ пустой."
-            except Exception as e:
-                last_err = e
-                msg = str(e).lower()
-                logger.debug(f"delete attempt failed: {e}")
-                if "wrong-revision" in msg or "revision" in msg:
-                    continue
-        return False, f"Ошибка удаления: {last_err}"
+        playlist_kind = playlist["playlist_kind"]
+        owner_id = playlist["owner_id"]
+        
+        # Вызываем метод API - он сам получит revision и сделает повторные попытки
+        ok, error = yandex_service.delete_track_from_playlist(
+            playlist_kind, owner_id, from_idx, to_idx
+        )
+        
+        if ok:
+            # Логируем действие
+            self.db.log_action(telegram_id, "track_deleted", playlist_id, f"from={from_idx}, to={to_idx}")
+            return True, "Трек успешно удалён."
+        
+        return False, error or "Ошибка удаления трека"
     
     def get_playlist_object(self, playlist_id: int, telegram_id: int) -> Optional[Any]:
         """
@@ -137,7 +124,7 @@ class PlaylistService:
         
         Args:
             playlist_id: ID плейлиста в БД
-            telegram_id: ID пользователя Telegram
+            telegram_id: ID пользователя Telegram (не используется, но оставлен для совместимости)
             
         Returns:
             Объект плейлиста или None
@@ -146,11 +133,18 @@ class PlaylistService:
         if not playlist:
             return None
         
+        # Получаем клиент и создаем сервис для работы с API
         client = self.client_manager.get_client_for_playlist(playlist_id)
-        try:
-            pl = client.users_playlists(playlist["playlist_kind"], playlist["owner_id"])
-            return pl
-        except Exception as e:
-            logger.exception(f"Ошибка получения плейлиста {playlist_id}: {e}")
+        yandex_service = YandexService(client)
+        
+        playlist_kind = playlist["playlist_kind"]
+        owner_id = playlist["owner_id"]
+        
+        # Используем метод из YandexService
+        pl_obj, err = yandex_service.get_playlist(playlist_kind, owner_id)
+        if pl_obj is None:
+            logger.debug(f"Ошибка получения плейлиста {playlist_id}: {err}")
             return None
+        
+        return pl_obj
 
