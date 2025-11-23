@@ -372,44 +372,7 @@ def create_playlist_start(update: Update, context: CallbackContext) -> int:
     telegram_id = update.effective_user.id
     db.ensure_user(telegram_id, update.effective_user.username)
     
-    # Если команда вызвана с аргументами (старый способ)
-    if context.args:
-        title = " ".join(context.args)
-        if len(title) > 100:
-            update.effective_message.reply_text(
-                "❌ Название плейлиста слишком длинное (максимум 100 символов).",
-                reply_markup=get_main_menu_keyboard()
-            )
-            return ConversationHandler.END
-        
-        update.effective_message.reply_text("⏳ Создаю плейлист...")
-        result = client_manager.create_playlist(telegram_id, title)
-        
-        if result:
-            playlist_id = result["id"]
-            share_token = result["share_token"]
-            share_link = f"https://t.me/{context.bot.username}?start={share_token}"
-            
-            if telegram_id not in user_contexts:
-                user_contexts[telegram_id] = {}
-            user_contexts[telegram_id]["current_playlist_id"] = playlist_id
-            
-            update.effective_message.reply_text(
-                f"✅ Плейлист «{title}» создан!\n\n"
-                f"🔗 Ссылка для шаринга:\n{share_link}\n\n"
-                f"Отправьте эту ссылку другим пользователям, чтобы они могли добавлять треки в ваш плейлист.",
-                reply_markup=get_main_menu_keyboard()
-            )
-            db.log_action(telegram_id, "playlist_created", playlist_id, f"title={title}")
-        else:
-            update.effective_message.reply_text(
-                "❌ Не удалось создать плейлист. Проверьте токен Яндекс.Музыки.\n\n"
-                "Используйте /set_token для установки своего токена.",
-                reply_markup=get_main_menu_keyboard()
-            )
-        return ConversationHandler.END
-    
-    # Новый способ - FSM диалог
+    # FSM диалог
     update.effective_message.reply_text(
         "📝 Создание нового плейлиста\n\n"
         "Введите название плейлиста (максимум 100 символов):\n\n"
@@ -564,18 +527,7 @@ def playlist_info(update: Update, context: CallbackContext):
     telegram_id = update.effective_user.id
     db.ensure_user(telegram_id, update.effective_user.username)
     
-    playlist_id = None
-    if context.args:
-        try:
-            playlist_id = int(context.args[0])
-        except ValueError:
-            update.effective_message.reply_text(
-                "❌ Неверный формат. Использование: /playlist_info [номер плейлиста]",
-                reply_markup=get_main_menu_keyboard()
-            )
-            return
-    else:
-        playlist_id = get_active_playlist_id(telegram_id)
+    playlist_id = get_active_playlist_id(telegram_id)
     
     if not playlist_id:
         update.effective_message.reply_text(
@@ -659,18 +611,7 @@ def show_list(update: Update, context: CallbackContext):
     telegram_id = update.effective_user.id
     db.ensure_user(telegram_id, update.effective_user.username)
     
-    playlist_id = None
-    if context.args:
-        try:
-            playlist_id = int(context.args[0])
-        except ValueError:
-            update.effective_message.reply_text(
-                "❌ Неверный формат. Использование: /list [номер плейлиста]",
-                reply_markup=get_main_menu_keyboard()
-            )
-            return
-    else:
-        playlist_id = get_active_playlist_id(telegram_id)
+    playlist_id = get_active_playlist_id(telegram_id)
     
     if not playlist_id:
         update.effective_message.reply_text(
@@ -736,25 +677,7 @@ def set_token_start(update: Update, context: CallbackContext) -> int:
     telegram_id = update.effective_user.id
     db.ensure_user(telegram_id, update.effective_user.username)
     
-    # Если команда вызвана с аргументами (старый способ)
-    if context.args:
-        token = context.args[0].strip()
-        
-        if client_manager.set_user_token(telegram_id, token):
-            update.effective_message.reply_text(
-                "✅ Токен успешно установлен!\n\n"
-                "Теперь ваши плейлисты будут создаваться в вашем аккаунте Яндекс.Музыки.",
-                reply_markup=get_main_menu_keyboard()
-            )
-            db.log_action(telegram_id, "token_set", None, None)
-        else:
-            update.effective_message.reply_text(
-                "❌ Не удалось установить токен. Проверьте правильность токена.",
-                reply_markup=get_main_menu_keyboard()
-            )
-        return ConversationHandler.END
-    
-    # Новый способ - FSM диалог
+    # FSM диалог
     update.effective_message.reply_text(
         "🔑 Установка токена Яндекс.Музыки\n\n"
         "⚠️ ВНИМАНИЕ: Вы передаете боту свой токен на свой страх и риск!\n\n"
@@ -826,42 +749,7 @@ def edit_name_start(update: Update, context: CallbackContext) -> int:
         # Проверяем, есть ли playlist_id в контексте
         playlist_id = context.user_data.get('edit_playlist_id')
     
-    # Если команда вызвана с аргументами (старый способ)
-    if context.args:
-        if not playlist_id:
-            playlist_id = get_active_playlist_id(telegram_id)
-        if not playlist_id:
-            update.effective_message.reply_text(
-                "❌ У вас нет активного плейлиста.",
-                reply_markup=get_main_menu_keyboard()
-            )
-            return ConversationHandler.END
-        
-        if not db.is_playlist_creator(playlist_id, telegram_id):
-            update.effective_message.reply_text(
-                "❌ Только создатель плейлиста может изменять название.",
-                reply_markup=get_main_menu_keyboard()
-            )
-            return ConversationHandler.END
-        
-        new_title = " ".join(context.args)
-        if len(new_title) > 100:
-            update.effective_message.reply_text(
-                "❌ Название слишком длинное (максимум 100 символов).",
-                reply_markup=get_main_menu_keyboard()
-            )
-            return ConversationHandler.END
-        
-        db.update_playlist(playlist_id, title=new_title)
-        update.effective_message.reply_text(
-            f"✅ Название плейлиста изменено на «{new_title}»",
-            reply_markup=get_main_menu_keyboard()
-        )
-        db.log_action(telegram_id, "playlist_name_edited", playlist_id, f"new_title={new_title}")
-        context.user_data.pop('edit_playlist_id', None)
-        return ConversationHandler.END
-    
-    # Новый способ - FSM диалог
+    # FSM диалог
     if not playlist_id:
         playlist_id = get_active_playlist_id(telegram_id)
     if not playlist_id:
@@ -1018,90 +906,7 @@ def delete_track_start(update: Update, context: CallbackContext) -> int:
                     )
                 return ConversationHandler.END
     
-    # Если команда вызвана с аргументами (старый способ - для обратной совместимости)
-    if context.args:
-        raw = context.args[0].strip()
-        if not re.match(r"^\d+$", raw):
-            update.effective_message.reply_text(
-                "❌ Неверный формат. Укажите номер трека (число).\n\n"
-                "💡 Используйте /list, чтобы увидеть номера треков.",
-                reply_markup=get_main_menu_keyboard()
-            )
-            return ConversationHandler.END
-        
-        index = int(raw)
-        playlist_id = get_active_playlist_id(telegram_id)
-        
-        if not playlist_id:
-            update.effective_message.reply_text(
-                "❌ У вас нет активного плейлиста.\n\n"
-                "💡 Используйте кнопки «📁 Мои плейлисты» или «📂 Общие плейлисты», чтобы выбрать плейлист.",
-                reply_markup=get_main_menu_keyboard()
-            )
-            return ConversationHandler.END
-        
-        if not db.check_playlist_access(playlist_id, telegram_id, need_edit=True):
-            playlist = db.get_playlist(playlist_id)
-            title = playlist.get("title") or "плейлист" if playlist else "плейлист"
-            update.effective_message.reply_text(
-                f"❌ У вас нет прав на удаление треков из плейлиста «{title}».\n\n"
-                f"💡 Только создатель или пользователи с правами редактирования могут удалять треки.",
-                reply_markup=get_main_menu_keyboard()
-            )
-            return ConversationHandler.END
-        
-        # Выполняем удаление
-        playlist = db.get_playlist(playlist_id)
-        if not playlist:
-            update.effective_message.reply_text(
-                "❌ Плейлист не найден.",
-                reply_markup=get_main_menu_keyboard()
-            )
-            return ConversationHandler.END
-        
-        pl_obj = get_playlist_obj_from_db(playlist_id, telegram_id)
-        if pl_obj is None:
-            update.effective_message.reply_text(
-                "❌ Не удалось загрузить плейлист.\n\n"
-                "💡 Возможно, проблема с доступом к Яндекс.Музыке.",
-                reply_markup=get_main_menu_keyboard()
-            )
-            return ConversationHandler.END
-        
-        tracks = getattr(pl_obj, "tracks", []) or []
-        total = len(tracks)
-        if index < 1 or index > total:
-            update.effective_message.reply_text(
-                f"❌ Номер трека вне диапазона.\n\n"
-                f"💡 Доступные номера: 1..{total}\n"
-                f"Используйте /list, чтобы увидеть список треков.",
-                reply_markup=get_main_menu_keyboard()
-            )
-            return ConversationHandler.END
-        
-        # Получаем информацию о треке перед удалением
-        item = tracks[index - 1]
-        t = item.track if hasattr(item, "track") and item.track else item
-        track_title = getattr(t, "title", None) or "Unknown"
-        
-        from_idx = index - 1
-        to_idx = index - 1
-        ok, err = delete_track_api(playlist_id, from_idx, to_idx, telegram_id)
-        
-        if ok:
-            update.effective_message.reply_text(
-                f"✅ Трек №{index} «{track_title}» удалён из плейлиста.",
-                reply_markup=get_main_menu_keyboard()
-            )
-        else:
-            update.effective_message.reply_text(
-                f"❌ Не удалось удалить трек: {err}\n\n"
-                f"💡 Попробуйте еще раз или проверьте права доступа.",
-                reply_markup=get_main_menu_keyboard()
-            )
-        return ConversationHandler.END
-    
-    # Новый способ - FSM диалог
+    # FSM диалог
     if not playlist_id:
         playlist_id = get_active_playlist_id(telegram_id)
     
@@ -1613,7 +1418,7 @@ def main():
         # FSM для создания плейлиста
         create_playlist_conv = ConversationHandler(
             entry_points=[
-                CommandHandler("create_playlist", create_playlist_start, pass_args=True),
+                CommandHandler("create_playlist", create_playlist_start),
                 MessageHandler(Filters.regex("^➕ Создать плейлист$"), create_playlist_start)
             ],
             states={
@@ -1633,7 +1438,7 @@ def main():
         # FSM для установки токена
         set_token_conv = ConversationHandler(
             entry_points=[
-                CommandHandler("set_token", set_token_start, pass_args=True)
+                CommandHandler("set_token", set_token_start)
             ],
             states={
                 WAITING_TOKEN: [
@@ -1655,12 +1460,12 @@ def main():
         dp.add_handler(set_token_conv)
         dp.add_handler(CommandHandler("my_playlists", my_playlists))
         dp.add_handler(CommandHandler("shared_playlists", shared_playlists))
-        dp.add_handler(CommandHandler("playlist_info", playlist_info, pass_args=True))
-        dp.add_handler(CommandHandler("list", show_list, pass_args=True))
+        dp.add_handler(CommandHandler("playlist_info", playlist_info))
+        dp.add_handler(CommandHandler("list", show_list))
         # FSM для редактирования названия
         edit_name_conv = ConversationHandler(
             entry_points=[
-                CommandHandler("edit_name", edit_name_start, pass_args=True),
+                CommandHandler("edit_name", edit_name_start),
                 CallbackQueryHandler(edit_name_start, pattern="^edit_name_")
             ],
             states={
@@ -1683,7 +1488,7 @@ def main():
         # FSM для удаления трека
         delete_track_conv = ConversationHandler(
             entry_points=[
-                CommandHandler("delete_track", delete_track_start, pass_args=True),
+                CommandHandler("delete_track", delete_track_start),
                 CallbackQueryHandler(delete_track_start, pattern="^delete_track_")
             ],
             states={
