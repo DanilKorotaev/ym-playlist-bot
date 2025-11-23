@@ -148,11 +148,10 @@ class MessageHandlers:
                 
                 ok, err = self.playlist_service.add_track(playlist_id, track_obj.id, album_obj.id, telegram_id)
                 if ok:
-                    artists = ", ".join([a.name for a in track_obj.artists]) if track_obj.artists else ""
-                    artist_text = f" — {artists}" if artists else ""
+                    track_display = yandex_service.format_track(track_obj)
                     update.effective_message.reply_text(
                         f"✅ Трек добавлен в «{playlist_title}»:\n"
-                        f"🎵 «{track_obj.title}»{artist_text}"
+                        f"🎵 «{track_display}»"
                     )
                 else:
                     update.effective_message.reply_text(
@@ -183,12 +182,10 @@ class MessageHandlers:
             total = len(tracks_list)
             
             for item in tracks_list:
-                t = item.track if hasattr(item, "track") and item.track else item
-                tr_id = getattr(t, "id", None) or getattr(t, "track_id", None)
-                alb = getattr(t, "albums", None)
-                if tr_id is None or not alb:
+                tr_id, album_id = yandex_service.extract_track_info(item)
+                if tr_id is None or album_id is None:
                     continue
-                ok, err = self.playlist_service.add_track(playlist_id, tr_id, alb[0].id, telegram_id)
+                ok, err = self.playlist_service.add_track(playlist_id, tr_id, album_id, telegram_id)
                 if ok:
                     added += 1
             
@@ -218,11 +215,10 @@ class MessageHandlers:
             total = len(tracks)
             
             for t in tracks:
-                tr_id = getattr(t, "id", None) or getattr(t, "track_id", None)
-                alb = getattr(t, "albums", None)
-                if tr_id is None or not alb:
+                tr_id, album_id = yandex_service.extract_track_info(t)
+                if tr_id is None or album_id is None:
                     continue
-                ok, err = self.playlist_service.add_track(playlist_id, tr_id, alb[0].id, telegram_id)
+                ok, err = self.playlist_service.add_track(playlist_id, tr_id, album_id, telegram_id)
                 if ok:
                     added += 1
             

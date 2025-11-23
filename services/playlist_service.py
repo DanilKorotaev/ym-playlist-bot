@@ -3,7 +3,7 @@
 Содержит бизнес-логику добавления и удаления треков из плейлистов.
 """
 import logging
-from typing import Tuple, Optional, Any
+from typing import Tuple, Optional, Any, List
 
 from database import DatabaseInterface
 from yandex_client_manager import YandexClientManager
@@ -147,4 +147,81 @@ class PlaylistService:
             return None
         
         return pl_obj
+    
+    def get_playlist_tracks(self, playlist_id: int, telegram_id: int) -> Optional[List[Any]]:
+        """
+        Получить список треков из плейлиста.
+        
+        Args:
+            playlist_id: ID плейлиста в БД
+            telegram_id: ID пользователя Telegram (не используется, но оставлен для совместимости)
+            
+        Returns:
+            Список треков или None, если плейлист не найден
+        """
+        pl_obj = self.get_playlist_object(playlist_id, telegram_id)
+        if pl_obj is None:
+            return None
+        
+        tracks = getattr(pl_obj, "tracks", []) or []
+        return tracks
+    
+    def get_playlist_tracks_count(self, playlist_id: int, telegram_id: int) -> Optional[int]:
+        """
+        Получить количество треков в плейлисте.
+        
+        Args:
+            playlist_id: ID плейлиста в БД
+            telegram_id: ID пользователя Telegram (не используется, но оставлен для совместимости)
+            
+        Returns:
+            Количество треков или None, если плейлист не найден
+        """
+        tracks = self.get_playlist_tracks(playlist_id, telegram_id)
+        if tracks is None:
+            return None
+        return len(tracks)
+    
+    def get_share_link(self, playlist_id: int, bot_username: str) -> Optional[str]:
+        """
+        Получить ссылку для шаринга плейлиста.
+        
+        Args:
+            playlist_id: ID плейлиста в БД
+            bot_username: Имя бота в Telegram
+            
+        Returns:
+            Ссылка для шаринга или None, если токен не найден
+        """
+        playlist = self.db.get_playlist(playlist_id)
+        if not playlist:
+            return None
+        
+        share_token = playlist.get("share_token")
+        if not share_token:
+            return None
+        
+        return f"https://t.me/{bot_username}?start={share_token}"
+    
+    def get_yandex_link(self, playlist_id: int) -> Optional[str]:
+        """
+        Получить ссылку на плейлист в Яндекс.Музыке.
+        
+        Args:
+            playlist_id: ID плейлиста в БД
+            
+        Returns:
+            Ссылка на плейлист в Яндекс.Музыке или None
+        """
+        playlist = self.db.get_playlist(playlist_id)
+        if not playlist:
+            return None
+        
+        owner_id = playlist.get("owner_id")
+        playlist_kind = playlist.get("playlist_kind")
+        
+        if not owner_id or not playlist_kind:
+            return None
+        
+        return f"https://music.yandex.ru/users/{owner_id}/playlists/{playlist_kind}"
 

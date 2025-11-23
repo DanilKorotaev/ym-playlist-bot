@@ -9,6 +9,8 @@ from telegram.ext import CallbackContext, ConversationHandler
 from database import DatabaseInterface
 from yandex_client_manager import YandexClientManager
 from utils.context import UserContextManager
+from services.playlist_service import PlaylistService
+from services.yandex_service import YandexService
 from .keyboards import get_main_menu_keyboard, get_cancel_keyboard
 
 logger = logging.getLogger(__name__)
@@ -40,6 +42,7 @@ class CommandHandlers:
         self.db = db
         self.client_manager = client_manager
         self.context_manager = context_manager
+        self.playlist_service = PlaylistService(db, client_manager)
     
     def start(self, update: Update, context: CallbackContext):
         """Команда /start."""
@@ -154,8 +157,7 @@ class CommandHandlers:
         
         if result:
             playlist_id = result["id"]
-            share_token = result["share_token"]
-            share_link = f"https://t.me/{context.bot.username}?start={share_token}"
+            share_link = self.playlist_service.get_share_link(playlist_id, context.bot.username)
             
             self.context_manager.set_active_playlist(telegram_id, playlist_id)
             
@@ -295,30 +297,18 @@ class CommandHandlers:
         
         title = playlist.get("title") or "Без названия"
         is_creator = self.db.is_playlist_creator(playlist_id, telegram_id)
-        share_token = playlist.get("share_token")
-        share_link = f"https://t.me/{context.bot.username}?start={share_token}" if share_token else None
-        
-        # Формируем ссылку на плейлист в Яндекс.Музыке
-        owner_id = playlist.get("owner_id")
-        playlist_kind = playlist.get("playlist_kind")
-        yandex_link = None
-        if owner_id and playlist_kind:
-            yandex_link = f"https://music.yandex.ru/users/{owner_id}/playlists/{playlist_kind}"
+        share_link = self.playlist_service.get_share_link(playlist_id, context.bot.username)
+        yandex_link = self.playlist_service.get_yandex_link(playlist_id)
         
         # Получаем информацию о количестве треков
-        from services.playlist_service import PlaylistService
-        playlist_service = PlaylistService(self.db, self.client_manager)
-        pl_obj = playlist_service.get_playlist_object(playlist_id, telegram_id)
-        tracks_count = 0
-        if pl_obj:
-            tracks = getattr(pl_obj, "tracks", []) or []
-            tracks_count = len(tracks)
+        tracks_count = self.playlist_service.get_playlist_tracks_count(playlist_id, telegram_id)
+        tracks_count_display = tracks_count if tracks_count is not None else 0
         
         lines = [
             f"📋 Информация о плейлисте\n",
             f"🎵 Название: {title}",
             f"👤 Ваш статус: {'Создатель' if is_creator else 'Участник'}",
-            f"🎶 Треков: {tracks_count}",
+            f"🎶 Треков: {tracks_count_display}",
         ]
         
         if yandex_link:
@@ -338,7 +328,7 @@ class CommandHandlers:
         
         # Кнопка удаления трека (для всех, кто имеет права редактирования, и если есть треки)
         can_edit = self.db.check_playlist_access(playlist_id, telegram_id, need_edit=True)
-        if can_edit and tracks_count > 0:
+        if can_edit and tracks_count is not None and tracks_count > 0:
             keyboard.append([InlineKeyboardButton("🗑️ Удалить трек", callback_data=f"delete_track_{playlist_id}")])
         
         reply_markup = InlineKeyboardMarkup(keyboard) if keyboard else None
@@ -379,17 +369,14 @@ class CommandHandlers:
             )
             return
         
-        from services.playlist_service import PlaylistService
-        playlist_service = PlaylistService(self.db, self.client_manager)
-        pl_obj = playlist_service.get_playlist_object(playlist_id, telegram_id)
-        if pl_obj is None:
+        tracks = self.playlist_service.get_playlist_tracks(playlist_id, telegram_id)
+        if tracks is None:
             update.effective_message.reply_text(
                 "❌ Не удалось загрузить плейлист. Возможно, проблема с доступом к Яндекс.Музыке.",
                 reply_markup=get_main_menu_keyboard()
             )
             return
         
-        tracks = getattr(pl_obj, "tracks", []) or []
         if not tracks:
             title = playlist.get("title") or "Плейлист"
             update.effective_message.reply_text(
@@ -402,14 +389,13 @@ class CommandHandlers:
         title = playlist.get("title") or "Плейлист"
         lines = [f"🎵 {title} ({len(tracks)} треков):\n"]
         
+        # Получаем клиент для создания YandexService
+        client = self.client_manager.get_client_for_playlist(playlist_id)
+        yandex_service = YandexService(client)
+        
         for i, item in enumerate(tracks, start=1):
-            t = item.track if hasattr(item, "track") and item.track else item
-            track_title = getattr(t, "title", None) or "Unknown"
-            artists = []
-            if getattr(t, "artists", None):
-                artists = [a.name for a in getattr(t, "artists", []) if getattr(a, "name", None)]
-            artist_line = " / ".join(artists) if artists else ""
-            lines.append(f"{i}. {track_title}" + (f" — {artist_line}" if artist_line else ""))
+            track_display = yandex_service.format_track(item)
+            lines.append(f"{i}. {track_display}")
         
         chunk = 50
         for i in range(0, len(lines), chunk):
@@ -681,10 +667,8 @@ class CommandHandlers:
             return ConversationHandler.END
         
         # Получаем информацию о плейлисте для показа количества треков
-        from services.playlist_service import PlaylistService
-        playlist_service = PlaylistService(self.db, self.client_manager)
-        pl_obj = playlist_service.get_playlist_object(playlist_id, telegram_id)
-        if pl_obj is None:
+        tracks = self.playlist_service.get_playlist_tracks(playlist_id, telegram_id)
+        if tracks is None:
             if update.callback_query:
                 update.callback_query.message.reply_text(
                     "❌ Не удалось загрузить плейлист.\n\n"
@@ -699,7 +683,6 @@ class CommandHandlers:
                 )
             return ConversationHandler.END
         
-        tracks = getattr(pl_obj, "tracks", []) or []
         total = len(tracks)
         
         if total == 0:
@@ -792,10 +775,8 @@ class CommandHandlers:
             )
             return ConversationHandler.END
         
-        from services.playlist_service import PlaylistService
-        playlist_service = PlaylistService(self.db, self.client_manager)
-        pl_obj = playlist_service.get_playlist_object(playlist_id, telegram_id)
-        if pl_obj is None:
+        tracks = self.playlist_service.get_playlist_tracks(playlist_id, telegram_id)
+        if tracks is None:
             update.effective_message.reply_text(
                 "❌ Не удалось загрузить плейлист.\n\n"
                 "💡 Возможно, проблема с доступом к Яндекс.Музыке.",
@@ -803,7 +784,6 @@ class CommandHandlers:
             )
             return ConversationHandler.END
         
-        tracks = getattr(pl_obj, "tracks", []) or []
         if index < 1 or index > len(tracks):
             update.effective_message.reply_text(
                 f"❌ Номер трека вне диапазона.\n\n"
@@ -815,21 +795,18 @@ class CommandHandlers:
         
         # Получаем информацию о треке перед удалением
         item = tracks[index - 1]
-        t = item.track if hasattr(item, "track") and item.track else item
-        track_title = getattr(t, "title", None) or "Unknown"
-        artists = []
-        if getattr(t, "artists", None):
-            artists = [a.name for a in getattr(t, "artists", []) if getattr(a, "name", None)]
-        artist_line = " / ".join(artists) if artists else ""
+        
+        # Получаем клиент для создания YandexService
+        client = self.client_manager.get_client_for_playlist(playlist_id)
+        yandex_service = YandexService(client)
+        track_display = yandex_service.format_track(item)
         
         from_idx = index - 1
         to_idx = index - 1
-        ok, err = playlist_service.delete_track(playlist_id, from_idx, to_idx, telegram_id)
+        ok, err = self.playlist_service.delete_track(playlist_id, from_idx, to_idx, telegram_id)
         
         if ok:
-            track_info = f"«{track_title}»"
-            if artist_line:
-                track_info += f" — {artist_line}"
+            track_info = f"«{track_display}»"
             update.effective_message.reply_text(
                 f"✅ Трек №{index} {track_info} удалён из плейлиста.",
                 reply_markup=get_main_menu_keyboard()

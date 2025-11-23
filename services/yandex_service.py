@@ -239,4 +239,70 @@ class YandexService:
                 return False, f"Ошибка удаления: {e}"
         
         return False, "Не удалось удалить трек после нескольких попыток"
+    
+    def extract_track_info(self, track_item: Any) -> Tuple[Optional[Any], Optional[Any]]:
+        """
+        Извлечь track_id и album_id из объекта трека.
+        
+        Args:
+            track_item: Объект трека (может быть Track или PlaylistTrack)
+            
+        Returns:
+            Кортеж (track_id, album_id) или (None, None) если не удалось извлечь
+        """
+        # Получаем сам трек (может быть обернут в PlaylistTrack)
+        t = track_item.track if hasattr(track_item, "track") and track_item.track else track_item
+        
+        # Извлекаем track_id
+        tr_id = getattr(t, "id", None) or getattr(t, "track_id", None)
+        
+        # Извлекаем album_id
+        alb = getattr(t, "albums", None)
+        album_id = alb[0].id if alb and len(alb) > 0 else None
+        
+        if tr_id is None or album_id is None:
+            return None, None
+        
+        return tr_id, album_id
+    
+    def format_track(self, track_item: Any) -> str:
+        """
+        Форматировать трек для отображения (название + артисты).
+        
+        Args:
+            track_item: Объект трека (может быть Track или PlaylistTrack)
+            
+        Returns:
+            Строка вида "Название — Артист1 / Артист2" или "Название"
+        """
+        # Получаем сам трек (может быть обернут в PlaylistTrack)
+        t = track_item.track if hasattr(track_item, "track") and track_item.track else track_item
+        
+        track_title = getattr(t, "title", None) or "Unknown"
+        artists = []
+        if getattr(t, "artists", None):
+            artists = [a.name for a in getattr(t, "artists", []) if getattr(a, "name", None)]
+        
+        artist_line = " / ".join(artists) if artists else ""
+        if artist_line:
+            return f"{track_title} — {artist_line}"
+        return track_title
+    
+    def get_track_artists(self, track_item: Any) -> str:
+        """
+        Получить строку с артистами трека.
+        
+        Args:
+            track_item: Объект трека (может быть Track или PlaylistTrack)
+            
+        Returns:
+            Строка с артистами, разделенными запятыми
+        """
+        # Получаем сам трек (может быть обернут в PlaylistTrack)
+        t = track_item.track if hasattr(track_item, "track") and track_item.track else track_item
+        
+        if getattr(t, "artists", None):
+            artists = [a.name for a in getattr(t, "artists", []) if getattr(a, "name", None)]
+            return ", ".join(artists) if artists else ""
+        return ""
 
