@@ -1,0 +1,266 @@
+"""
+Обработчики текстовых сообщений для Telegram бота.
+"""
+import logging
+from telegram import Update
+from telegram.ext import CallbackContext
+
+from database import DatabaseInterface
+from yandex_client_manager import YandexClientManager
+from utils.context import UserContextManager
+from services.link_parser import parse_track_link, parse_playlist_link, parse_album_link, parse_share_link
+from services.yandex_service import YandexService
+from services.playlist_service import PlaylistService
+from .keyboards import get_main_menu_keyboard
+
+logger = logging.getLogger(__name__)
+
+
+class MessageHandlers:
+    """Класс с обработчиками текстовых сообщений."""
+    
+    def __init__(
+        self,
+        db: DatabaseInterface,
+        client_manager: YandexClientManager,
+        context_manager: UserContextManager,
+        command_handlers=None
+    ):
+        """
+        Инициализация обработчиков.
+        
+        Args:
+            db: Интерфейс базы данных
+            client_manager: Менеджер клиентов Яндекс.Музыки
+            context_manager: Менеджер контекста пользователей
+            command_handlers: Обработчики команд (опционально, создается автоматически если не передан)
+        """
+        self.db = db
+        self.client_manager = client_manager
+        self.context_manager = context_manager
+        self.playlist_service = PlaylistService(db, client_manager)
+        self._command_handlers = command_handlers
+    
+    @property
+    def command_handlers(self):
+        """Ленивая инициализация command_handlers для избежания циклических импортов."""
+        if self._command_handlers is None:
+            from .commands import CommandHandlers
+            self._command_handlers = CommandHandlers(self.db, self.client_manager, self.context_manager)
+        return self._command_handlers
+    
+    def handle_menu_buttons(self, update: Update, context: CallbackContext):
+        """Обработка нажатий на кнопки меню."""
+        text = update.effective_message.text.strip()
+        telegram_id = update.effective_user.id
+        self.db.ensure_user(telegram_id, update.effective_user.username)
+        
+        # Проверяем, не находится ли пользователь в состоянии FSM
+        # Если да, то не обрабатываем кнопки меню (кроме "❌ Отмена", которая обрабатывается ConversationHandler)
+        if context.user_data.get('delete_track_playlist_id') is not None:
+            # Пользователь в процессе удаления трека - ConversationHandler должен обработать
+            return
+        if context.user_data.get('edit_playlist_id') is not None:
+            # Пользователь в процессе редактирования названия - ConversationHandler должен обработать
+            return
+        
+        if text == "📁 Мои плейлисты":
+            self.command_handlers.my_playlists(update, context)
+        elif text == "📂 Общие плейлисты":
+            self.command_handlers.shared_playlists(update, context)
+        elif text == "📋 Список треков":
+            self.command_handlers.show_list(update, context)
+        elif text == "ℹ️ Информация":
+            self.command_handlers.playlist_info(update, context)
+        elif text == "🏠 Главное меню":
+            self.command_handlers.main_menu(update, context)
+        # Кнопка "➕ Создать плейлист" обрабатывается ConversationHandler
+        # Кнопка "❌ Отмена" обрабатывается fallback'ами ConversationHandler
+        else:
+            # Если это не кнопка меню, пытаемся обработать как ссылку
+            self.add_command(update, context)
+    
+    def add_command(self, update: Update, context: CallbackContext):
+        """Обработка ссылок на треки/альбомы/плейлисты."""
+        telegram_id = update.effective_user.id
+        self.db.ensure_user(telegram_id, update.effective_user.username)
+        
+        # Проверяем, не находится ли пользователь в состоянии FSM
+        # Если да, то не обрабатываем сообщение здесь (ConversationHandler должен обработать)
+        if context.user_data.get('delete_track_playlist_id') is not None:
+            # Пользователь в процессе удаления трека - не обрабатываем
+            return
+        if context.user_data.get('edit_playlist_id') is not None:
+            # Пользователь в процессе редактирования названия - не обрабатываем
+            return
+        
+        text = (update.effective_message.text or "").strip()
+        
+        # Получаем активный плейлист
+        playlist_id = self.context_manager.get_active_playlist_id(telegram_id)
+        
+        if not playlist_id:
+            update.effective_message.reply_text(
+                "❌ У вас нет активного плейлиста.\n\n"
+                "💡 Создайте плейлист, используя кнопку «➕ Создать плейлист», или получите доступ к существующему.",
+                reply_markup=get_main_menu_keyboard()
+            )
+            return
+        
+        # Проверяем доступ
+        if not self.db.check_playlist_access(playlist_id, telegram_id, need_add=True):
+            playlist = self.db.get_playlist(playlist_id)
+            title = playlist.get("title") or "плейлист" if playlist else "плейлист"
+            update.effective_message.reply_text(
+                f"❌ У вас нет прав на добавление треков в плейлист «{title}».\n\n"
+                f"💡 Обратитесь к создателю плейлиста для получения доступа.",
+                reply_markup=get_main_menu_keyboard()
+            )
+            return
+        
+        # Показываем информацию об активном плейлисте
+        playlist = self.db.get_playlist(playlist_id)
+        playlist_title = playlist.get("title") or "плейлист" if playlist else "плейлист"
+        
+        client = self.client_manager.get_client(telegram_id)
+        yandex_service = YandexService(client)
+        
+        # Трек
+        tr = parse_track_link(text)
+        if tr:
+            try:
+                update.effective_message.reply_text("⏳ Добавляю трек...")
+                track_obj = yandex_service.get_track(tr)
+                if not track_obj:
+                    update.effective_message.reply_text(
+                        f"❌ Не удалось получить трек.\n\n"
+                        f"💡 Проверьте правильность ссылки."
+                    )
+                    return
+                
+                album_obj = track_obj.albums[0] if track_obj.albums else None
+                if not album_obj:
+                    update.effective_message.reply_text(
+                        f"❌ Не удалось получить альбом для трека.\n\n"
+                        f"💡 Проверьте правильность ссылки."
+                    )
+                    return
+                
+                ok, err = self.playlist_service.add_track(playlist_id, track_obj.id, album_obj.id, telegram_id)
+                if ok:
+                    artists = ", ".join([a.name for a in track_obj.artists]) if track_obj.artists else ""
+                    artist_text = f" — {artists}" if artists else ""
+                    update.effective_message.reply_text(
+                        f"✅ Трек добавлен в «{playlist_title}»:\n"
+                        f"🎵 «{track_obj.title}»{artist_text}"
+                    )
+                else:
+                    update.effective_message.reply_text(
+                        f"❌ Не удалось добавить трек: {err}\n\n"
+                        f"💡 Проверьте права доступа к плейлисту."
+                    )
+            except Exception as e:
+                logger.exception(f"Error in add track: {e}")
+                update.effective_message.reply_text(
+                    f"❌ Ошибка при добавлении трека: {str(e)}\n\n"
+                    f"💡 Проверьте правильность ссылки и попробуйте еще раз."
+                )
+            return
+        
+        # Плейлист
+        owner, pid = parse_playlist_link(text)
+        if pid:
+            update.effective_message.reply_text("⏳ Загружаю треки из плейлиста...")
+            pl_obj, err = yandex_service.get_playlist(pid, owner)
+            if pl_obj is None:
+                update.effective_message.reply_text(
+                    f"❌ Не удалось получить плейлист: {err}\n\n"
+                    f"💡 Проверьте правильность ссылки."
+                )
+                return
+            added = 0
+            tracks_list = getattr(pl_obj, "tracks", []) or []
+            total = len(tracks_list)
+            
+            for item in tracks_list:
+                t = item.track if hasattr(item, "track") and item.track else item
+                tr_id = getattr(t, "id", None) or getattr(t, "track_id", None)
+                alb = getattr(t, "albums", None)
+                if tr_id is None or not alb:
+                    continue
+                ok, err = self.playlist_service.add_track(playlist_id, tr_id, alb[0].id, telegram_id)
+                if ok:
+                    added += 1
+            
+            if added > 0:
+                update.effective_message.reply_text(
+                    f"✅ Добавлено {added} из {total} треков в «{playlist_title}»."
+                )
+            else:
+                update.effective_message.reply_text(
+                    f"⚠️ Не удалось добавить треки из плейлиста.\n\n"
+                    f"💡 Возможно, все треки уже есть в плейлисте или возникла ошибка."
+                )
+            return
+        
+        # Альбом
+        alb_id = parse_album_link(text)
+        if alb_id:
+            update.effective_message.reply_text("⏳ Загружаю треки из альбома...")
+            tracks = yandex_service.get_album_tracks(alb_id)
+            if not tracks:
+                update.effective_message.reply_text(
+                    "❌ Не удалось получить альбом или треки.\n\n"
+                    "💡 Проверьте правильность ссылки."
+                )
+                return
+            added = 0
+            total = len(tracks)
+            
+            for t in tracks:
+                tr_id = getattr(t, "id", None) or getattr(t, "track_id", None)
+                alb = getattr(t, "albums", None)
+                if tr_id is None or not alb:
+                    continue
+                ok, err = self.playlist_service.add_track(playlist_id, tr_id, alb[0].id, telegram_id)
+                if ok:
+                    added += 1
+            
+            if added > 0:
+                update.effective_message.reply_text(
+                    f"✅ Добавлено {added} из {total} треков из альбома в «{playlist_title}»."
+                )
+            else:
+                update.effective_message.reply_text(
+                    f"⚠️ Не удалось добавить треки из альбома.\n\n"
+                    f"💡 Возможно, все треки уже есть в плейлисте или возникла ошибка."
+                )
+            return
+        
+        # Ссылка на шаринг плейлиста
+        share_token = parse_share_link(text)
+        if share_token:
+            playlist = self.db.get_playlist_by_share_token(share_token)
+            if playlist:
+                self.db.grant_playlist_access(playlist["id"], telegram_id, can_add=True)
+                # Устанавливаем как активный
+                self.context_manager.set_active_playlist(telegram_id, playlist["id"])
+                update.effective_message.reply_text(
+                    f"✅ Вы получили доступ к плейлисту «{playlist.get('title', 'Без названия')}»!\n\n"
+                    f"Теперь вы можете добавлять треки в этот плейлист.",
+                    reply_markup=get_main_menu_keyboard()
+                )
+                self.db.log_action(telegram_id, "playlist_shared_access", playlist["id"], f"via_token={share_token}")
+                return
+        
+        update.effective_message.reply_text(
+            "❌ Не удалось распознать ссылку.\n\n"
+            "📋 Поддерживаемые форматы:\n"
+            "• Трек: music.yandex.ru/track/...\n"
+            "• Плейлист: music.yandex.ru/users/.../playlists/...\n"
+            "• Альбом: music.yandex.ru/album/...\n"
+            "• Ссылка на шаринг плейлиста\n\n"
+            f"💡 Активный плейлист: «{playlist_title}»",
+            reply_markup=get_main_menu_keyboard()
+        )
+
