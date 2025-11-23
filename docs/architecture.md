@@ -21,7 +21,15 @@
 - **Services** (`services/`):
   - `link_parser.py` - парсинг ссылок Яндекс.Музыки (треки, альбомы, плейлисты, токены)
   - `yandex_service.py` - высокоуровневые методы для работы с API Яндекс.Музыки
-  - `playlist_service.py` - бизнес-логика работы с плейлистами (добавление/удаление треков)
+    - Получение треков, альбомов, плейлистов
+    - Добавление/удаление треков в плейлистах (с автоматической обработкой revision)
+    - Форматирование треков для отображения
+    - Извлечение информации о треках (track_id, album_id)
+  - `playlist_service.py` - бизнес-логика работы с плейлистами
+    - Добавление/удаление треков (с проверкой прав доступа и логированием)
+    - Получение треков и их количества (возвращает `Optional` для явного указания отсутствия плейлиста)
+    - Формирование ссылок для шаринга и Яндекс.Музыки
+    - Получение объекта плейлиста из Яндекс.Музыки
 
 ### Utils Layer
 - **UserContextManager** (`utils/context.py`):
@@ -80,6 +88,98 @@ ym-playlist-bot/
 3. **Тестируемость**: Каждый модуль можно тестировать независимо
 4. **Масштабируемость**: Легко добавлять новые handlers и services
 5. **Читаемость**: `bot.py` стал намного короче и понятнее
+6. **Разделение ответственности**: 
+   - `YandexService` - вся работа с API Яндекс.Музыки (получение revision, повторные попытки)
+   - `PlaylistService` - бизнес-логика (проверка прав, логирование)
+   - `handlers` - только обработка Telegram-событий
+7. **Отсутствие дублирования**: Общая логика вынесена в переиспользуемые методы сервисов
+
+## Примеры использования сервисов
+
+Бизнес-логика в `services/` может использоваться независимо от Telegram бота, например, в консольных скриптах для отладки или автоматизации.
+
+### Пример 1: Парсинг ссылок
+
+```python
+from services.link_parser import parse_track_link, parse_album_link, parse_playlist_link
+
+# Парсинг ссылки на трек
+track_id = parse_track_link("https://music.yandex.ru/track/123456")
+# Результат: 123456
+
+# Парсинг ссылки на альбом
+album_id = parse_album_link("https://music.yandex.ru/album/789")
+# Результат: 789
+
+# Парсинг ссылки на плейлист
+owner, playlist_id = parse_playlist_link("https://music.yandex.ru/users/user123/playlists/456")
+# Результат: ('user123', '456')
+```
+
+### Пример 2: Работа с API Яндекс.Музыки
+
+```python
+from yandex_music import Client
+from services.yandex_service import YandexService
+
+# Создаем клиент
+client = Client("YOUR_TOKEN")
+client.init()
+
+# Создаем сервис
+yandex_service = YandexService(client)
+
+# Получаем трек
+track = yandex_service.get_track(123456)
+
+# Форматируем трек для отображения
+track_display = yandex_service.format_track(track)
+# Результат: "Название трека — Исполнитель1 / Исполнитель2"
+
+# Извлекаем информацию о треке
+track_id, album_id = yandex_service.extract_track_info(track)
+```
+
+### Пример 3: Работа с плейлистами
+
+```python
+from database import create_database
+from yandex_client_manager import YandexClientManager
+from services.playlist_service import PlaylistService
+
+# Инициализация
+db = create_database()
+client_manager = YandexClientManager("YANDEX_TOKEN", db)
+playlist_service = PlaylistService(db, client_manager)
+
+# Добавление трека в плейлист
+ok, error = playlist_service.add_track(
+    playlist_id=1,
+    track_id=123456,
+    album_id=789,
+    telegram_id=123456789
+)
+
+# Получение треков из плейлиста
+tracks = playlist_service.get_playlist_tracks(playlist_id=1, telegram_id=123456789)
+if tracks is None:
+    print("Плейлист не найден")
+elif not tracks:
+    print("Плейлист пуст")
+else:
+    print(f"В плейлисте {len(tracks)} треков")
+
+# Получение количества треков
+count = playlist_service.get_playlist_tracks_count(playlist_id=1, telegram_id=123456789)
+if count is None:
+    print("Плейлист не найден")
+else:
+    print(f"Количество треков: {count}")
+
+# Формирование ссылок
+share_link = playlist_service.get_share_link(playlist_id=1, bot_username="my_bot")
+yandex_link = playlist_service.get_yandex_link(playlist_id=1)
+```
 
 ## Планируемые улучшения
 

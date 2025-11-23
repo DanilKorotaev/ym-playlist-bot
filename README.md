@@ -482,23 +482,39 @@ sudo systemctl restart liza-bot.service
 
 ```
 ym-playlist-bot/
-├── bot.py                    # Основной файл бота
-├── database/                  # Модуль работы с БД
-│   ├── __init__.py           # Фабрика для создания БД
-│   ├── base.py               # Абстрактный интерфейс DatabaseInterface
-│   ├── sqlite_db.py          # Реализация для SQLite
-│   └── postgresql_db.py      # Реализация для PostgreSQL
-├── yandex_client_manager.py   # Управление клиентами Яндекс.Музыки
-├── bot.db                     # База данных SQLite (создается автоматически)
-├── docker-compose.yml         # Docker Compose конфигурация (PostgreSQL + pgAdmin + Bot)
-├── Dockerfile                 # Docker образ для бота
-├── requirements.txt           # Зависимости Python
-├── .env                       # Переменные окружения (не коммитится)
-├── .env.example               # Шаблон переменных окружения
-├── .gitignore                 # Игнорируемые файлы для Git
-├── docs/                      # Документация
-└── README.md                  # Этот файл
+├── bot.py                      # Точка входа, инициализация и регистрация handlers
+├── yandex_client_manager.py    # Управление клиентами Яндекс.Музыки
+├── database/                    # Модуль работы с БД
+│   ├── __init__.py             # Фабрика для создания БД
+│   ├── base.py                 # Абстрактный интерфейс DatabaseInterface
+│   ├── sqlite_db.py            # Реализация для SQLite
+│   └── postgresql_db.py        # Реализация для PostgreSQL
+├── services/                    # Бизнес-логика (независима от Telegram)
+│   ├── __init__.py
+│   ├── link_parser.py          # Парсинг ссылок Яндекс.Музыки
+│   ├── yandex_service.py       # Работа с API Яндекс.Музыки
+│   └── playlist_service.py     # Бизнес-логика плейлистов
+├── handlers/                    # Обработчики Telegram
+│   ├── __init__.py
+│   ├── commands.py             # Команды бота
+│   ├── callbacks.py            # Callback query
+│   ├── messages.py             # Текстовые сообщения
+│   └── keyboards.py            # Клавиатуры
+├── utils/                       # Утилиты
+│   ├── __init__.py
+│   └── context.py              # Управление контекстом пользователей
+├── bot.db                       # База данных SQLite (создается автоматически)
+├── docker-compose.yml           # Docker Compose конфигурация (PostgreSQL + pgAdmin + Bot)
+├── Dockerfile                   # Docker образ для бота
+├── requirements.txt            # Зависимости Python
+├── .env                         # Переменные окружения (не коммитится)
+├── .env.example                 # Шаблон переменных окружения
+├── .gitignore                   # Игнорируемые файлы для Git
+├── docs/                        # Документация
+└── README.md                    # Этот файл
 ```
+
+Подробную информацию об архитектуре см. в [docs/architecture.md](docs/architecture.md)
 
 ## Безопасность
 
