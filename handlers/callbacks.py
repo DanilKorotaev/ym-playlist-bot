@@ -2,7 +2,7 @@
 Обработчики callback query для Telegram бота.
 """
 import logging
-from telegram import Update
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import CallbackContext
 
 from database import DatabaseInterface
@@ -92,4 +92,32 @@ class CallbackHandlers:
                 reply_markup=None
             )
             self.db.log_action(telegram_id, "playlist_deleted", playlist_id, None)
+        elif data.startswith("edit_playlist_"):
+            playlist_id = int(data.split("_")[-1])
+            playlist = self.db.get_playlist(playlist_id)
+            if not playlist:
+                query.edit_message_text("❌ Плейлист не найден.")
+                return
+            
+            if not self.db.is_playlist_creator(playlist_id, telegram_id):
+                query.edit_message_text("❌ Только создатель плейлиста может редактировать его.")
+                return
+            
+            title = playlist.get("title") or "Плейлист"
+            
+            # Создаем клавиатуру с кнопками редактирования
+            keyboard = [
+                [InlineKeyboardButton("✏️ Изменить имя", callback_data=f"edit_name_{playlist_id}")],
+                [InlineKeyboardButton("🖼️ Изменить/установить картинку", callback_data=f"set_cover_{playlist_id}")],
+                [InlineKeyboardButton("🗑️ Удалить плейлист", callback_data=f"delete_playlist_{playlist_id}")],
+                [InlineKeyboardButton("🗑️ Удалить трек", callback_data=f"delete_track_{playlist_id}")]
+            ]
+            
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            query.message.reply_text(
+                f"✏️ Редактирование плейлиста «{title}»\n\n"
+                f"Выберите действие:",
+                reply_markup=reply_markup
+            )
 

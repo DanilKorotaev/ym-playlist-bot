@@ -224,4 +224,73 @@ class PlaylistService:
             return None
         
         return f"https://music.yandex.ru/users/{owner_id}/playlists/{playlist_kind}"
+    
+    def set_playlist_cover(
+        self,
+        playlist_id: int,
+        image_file: Any,
+        telegram_id: int
+    ) -> Tuple[bool, Optional[str]]:
+        """
+        Установить обложку для плейлиста.
+        
+        Args:
+            playlist_id: ID плейлиста в БД
+            image_file: Файл изображения (file-like object или bytes)
+            telegram_id: ID пользователя Telegram
+            
+        Returns:
+            Кортеж (успех, сообщение об ошибке)
+        """
+        playlist = self.db.get_playlist(playlist_id)
+        if not playlist:
+            return False, "Плейлист не найден."
+        
+        # Проверяем права доступа (только создатель может менять обложку)
+        if not self.db.is_playlist_creator(playlist_id, telegram_id):
+            return False, "Только создатель плейлиста может изменять обложку."
+        
+        # Получаем клиент и создаем сервис для работы с API
+        client = self.client_manager.get_client_for_playlist(playlist_id)
+        yandex_service = YandexService(client)
+        
+        playlist_kind = playlist["playlist_kind"]
+        owner_id = playlist["owner_id"]
+        
+        # Вызываем метод API
+        ok, error = yandex_service.set_playlist_cover(
+            playlist_kind, owner_id, image_file
+        )
+        
+        if ok:
+            # Логируем действие
+            self.db.log_action(telegram_id, "playlist_cover_set", playlist_id, None)
+            return True, None
+        
+        return False, error or "Ошибка установки обложки"
+    
+    def get_playlist_cover_url(self, playlist_id: int, telegram_id: int) -> Optional[str]:
+        """
+        Получить URL обложки плейлиста.
+        
+        Args:
+            playlist_id: ID плейлиста в БД
+            telegram_id: ID пользователя Telegram (не используется, но оставлен для совместимости)
+            
+        Returns:
+            URL обложки или None, если обложка не найдена
+        """
+        playlist = self.db.get_playlist(playlist_id)
+        if not playlist:
+            return None
+        
+        # Получаем клиент и создаем сервис для работы с API
+        client = self.client_manager.get_client_for_playlist(playlist_id)
+        yandex_service = YandexService(client)
+        
+        playlist_kind = playlist["playlist_kind"]
+        owner_id = playlist["owner_id"]
+        
+        # Используем метод из YandexService
+        return yandex_service.get_playlist_cover_url(playlist_kind, owner_id)
 

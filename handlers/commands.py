@@ -20,6 +20,7 @@ WAITING_PLAYLIST_NAME = 1
 WAITING_TOKEN = 2
 WAITING_EDIT_NAME = 3
 WAITING_TRACK_NUMBER = 4
+WAITING_PLAYLIST_COVER = 5
 
 
 class CommandHandlers:
@@ -321,10 +322,9 @@ class CommandHandlers:
         # Создаем inline-кнопки для действий
         keyboard = []
         
-        # Кнопки для создателя
+        # Кнопка "Редактировать" для создателя
         if is_creator:
-            keyboard.append([InlineKeyboardButton("✏️ Изменить название", callback_data=f"edit_name_{playlist_id}")])
-            keyboard.append([InlineKeyboardButton("🗑️ Удалить плейлист", callback_data=f"delete_playlist_{playlist_id}")])
+            keyboard.append([InlineKeyboardButton("✏️ Редактировать", callback_data=f"edit_playlist_{playlist_id}")])
         
         # Кнопка удаления трека (для всех, кто имеет права редактирования, и если есть треки)
         can_edit = self.db.check_playlist_access(playlist_id, telegram_id, need_edit=True)
@@ -824,12 +824,148 @@ class CommandHandlers:
         
         return ConversationHandler.END
     
+    def set_cover_start(self, update: Update, context: CallbackContext) -> int:
+        """Начало установки обложки (FSM)."""
+        telegram_id = update.effective_user.id
+        self.db.ensure_user(telegram_id, update.effective_user.username)
+        
+        # Если это callback query, извлекаем playlist_id из data
+        playlist_id = None
+        if update.callback_query:
+            data = update.callback_query.data
+            if data.startswith("set_cover_"):
+                try:
+                    playlist_id = int(data.split("_")[-1])
+                except (ValueError, IndexError):
+                    if update.callback_query.message:
+                        update.callback_query.message.reply_text(
+                            "❌ Ошибка: неверный формат данных.",
+                            reply_markup=get_main_menu_keyboard()
+                        )
+                    return ConversationHandler.END
+        else:
+            # Проверяем, есть ли playlist_id в контексте
+            playlist_id = context.user_data.get('set_cover_playlist_id')
+        
+        # FSM диалог
+        if not playlist_id:
+            playlist_id = self.context_manager.get_active_playlist_id(telegram_id)
+        if not playlist_id:
+            if update.callback_query:
+                update.callback_query.message.reply_text(
+                    "❌ У вас нет активного плейлиста.",
+                    reply_markup=get_main_menu_keyboard()
+                )
+            else:
+                update.effective_message.reply_text(
+                    "❌ У вас нет активного плейлиста.",
+                    reply_markup=get_main_menu_keyboard()
+                )
+            return ConversationHandler.END
+        
+        # Проверяем, что плейлист существует
+        playlist = self.db.get_playlist(playlist_id)
+        if not playlist:
+            if update.callback_query:
+                update.callback_query.message.reply_text(
+                    "❌ Плейлист не найден.",
+                    reply_markup=get_main_menu_keyboard()
+                )
+            else:
+                update.effective_message.reply_text(
+                    "❌ Плейлист не найден.",
+                    reply_markup=get_main_menu_keyboard()
+                )
+            return ConversationHandler.END
+        
+        if not self.db.is_playlist_creator(playlist_id, telegram_id):
+            if update.callback_query:
+                update.callback_query.message.reply_text(
+                    "❌ Только создатель плейлиста может изменять обложку.",
+                    reply_markup=get_main_menu_keyboard()
+                )
+            else:
+                update.effective_message.reply_text(
+                    "❌ Только создатель плейлиста может изменять обложку.",
+                    reply_markup=get_main_menu_keyboard()
+                )
+            return ConversationHandler.END
+        
+        context.user_data['set_cover_playlist_id'] = playlist_id
+        
+        # Определяем, откуда пришел запрос (callback или message)
+        if update.callback_query:
+            update.callback_query.answer()
+            update.callback_query.message.reply_text(
+                "🖼️ Установка обложки плейлиста\n\n"
+                "Отправьте фото для обложки плейлиста:",
+                reply_markup=get_cancel_keyboard()
+            )
+        else:
+            update.effective_message.reply_text(
+                "🖼️ Установка обложки плейлиста\n\n"
+                "Отправьте фото для обложки плейлиста:",
+                reply_markup=get_cancel_keyboard()
+            )
+        return WAITING_PLAYLIST_COVER
+    
+    def set_cover_input(self, update: Update, context: CallbackContext) -> int:
+        """Обработка ввода обложки."""
+        telegram_id = update.effective_user.id
+        
+        # Проверяем, что это фото
+        if not update.effective_message.photo:
+            update.effective_message.reply_text(
+                "❌ Пожалуйста, отправьте фото для обложки.\n\n"
+                "💡 Попробуйте еще раз:",
+                reply_markup=get_cancel_keyboard()
+            )
+            return WAITING_PLAYLIST_COVER
+        
+        playlist_id = context.user_data.get('set_cover_playlist_id')
+        if not playlist_id:
+            update.effective_message.reply_text(
+                "❌ Ошибка: плейлист не найден.",
+                reply_markup=get_main_menu_keyboard()
+            )
+            return ConversationHandler.END
+        
+        # Получаем фото (берем самое большое)
+        photo = update.effective_message.photo[-1]
+        
+        update.effective_message.reply_text("⏳ Загружаю обложку...")
+        
+        # Скачиваем фото
+        file = photo.get_file()
+        image_file = file.download_as_bytearray()
+        
+        # Устанавливаем обложку
+        ok, err = self.playlist_service.set_playlist_cover(playlist_id, image_file, telegram_id)
+        
+        if ok:
+            update.effective_message.reply_text(
+                "✅ Обложка плейлиста успешно установлена!",
+                reply_markup=get_main_menu_keyboard()
+            )
+        else:
+            update.effective_message.reply_text(
+                f"❌ Не удалось установить обложку: {err}\n\n"
+                f"💡 Попробуйте еще раз или проверьте права доступа.",
+                reply_markup=get_main_menu_keyboard()
+            )
+        
+        # Очищаем контекст
+        context.user_data.pop('set_cover_playlist_id', None)
+        
+        return ConversationHandler.END
+    
     def cancel_operation(self, update: Update, context: CallbackContext) -> int:
         """Отмена текущей операции."""
         # Очищаем контекст FSM
         context.user_data.pop('delete_track_playlist_id', None)
         context.user_data.pop('delete_track_total', None)
         context.user_data.pop('edit_playlist_id', None)
+        context.user_data.pop('set_cover_playlist_id', None)
         
         update.effective_message.reply_text(
             "❌ Операция отменена.",

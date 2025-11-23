@@ -16,7 +16,7 @@ from telegram.ext import (
 from database import create_database
 from yandex_client_manager import YandexClientManager
 from utils.context import UserContextManager
-from handlers.commands import CommandHandlers, WAITING_PLAYLIST_NAME, WAITING_TOKEN, WAITING_EDIT_NAME, WAITING_TRACK_NUMBER
+from handlers.commands import CommandHandlers, WAITING_PLAYLIST_NAME, WAITING_TOKEN, WAITING_EDIT_NAME, WAITING_TRACK_NUMBER, WAITING_PLAYLIST_COVER
 from handlers.callbacks import CallbackHandlers
 from handlers.messages import MessageHandlers
 from handlers.keyboards import get_main_menu_keyboard, get_cancel_keyboard
@@ -195,6 +195,27 @@ def main():
         )
         
         dp.add_handler(delete_track_conv)
+        
+        # FSM для установки обложки
+        set_cover_conv = ConversationHandler(
+            entry_points=[
+                CallbackQueryHandler(command_handlers.set_cover_start, pattern="^set_cover_")
+            ],
+            states={
+                WAITING_PLAYLIST_COVER: [
+                    MessageHandler(Filters.photo, command_handlers.set_cover_input)
+                ],
+            },
+            fallbacks=[
+                CommandHandler("cancel", command_handlers.cancel_operation),
+                CommandHandler("start", command_handlers.cancel_operation),
+                MessageHandler(Filters.regex("^(❌ Отмена|отмена|🏠 Главное меню)$"), command_handlers.cancel_operation)
+            ],
+            name="set_cover",
+            persistent=False
+        )
+        
+        dp.add_handler(set_cover_conv)
         
         # Inline-кнопки
         dp.add_handler(CallbackQueryHandler(callback_handlers.button_callback))

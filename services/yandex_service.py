@@ -5,6 +5,7 @@
 import json
 import logging
 import urllib.parse
+import requests
 from typing import List, Optional, Tuple, Any
 from yandex_music import Client
 from yandex_music.exceptions import YandexMusicError
@@ -305,4 +306,146 @@ class YandexService:
             artists = [a.name for a in getattr(t, "artists", []) if getattr(a, "name", None)]
             return ", ".join(artists) if artists else ""
         return ""
+    
+    def set_playlist_cover(
+        self,
+        playlist_kind: str,
+        owner_id: str,
+        image_file: Any,
+        max_retries: int = 2
+    ) -> Tuple[bool, Optional[str]]:
+        """
+        Установить обложку для плейлиста через API Яндекс.Музыки.
+        
+        Args:
+            playlist_kind: ID плейлиста (kind)
+            owner_id: ID владельца плейлиста
+            image_file: Файл изображения (file-like object или bytes)
+            max_retries: Максимальное количество попыток при ошибке revision
+            
+        Returns:
+            Кортеж (успех, сообщение об ошибке)
+        """
+        for attempt in range(max_retries):
+            try:
+                # Получаем плейлист с актуальной revision
+                pl = self.client.users_playlists(playlist_kind, owner_id)
+                if pl is None:
+                    return False, "Не удалось получить плейлист."
+                
+                revision = getattr(pl, "revision", 1)
+                
+                # Подготавливаем файл для загрузки
+                if hasattr(image_file, 'read'):
+                    # Это file-like object
+                    image_data = image_file.read()
+                    image_file.seek(0)  # Возвращаем указатель в начало
+                elif isinstance(image_file, bytes):
+                    image_data = image_file
+                else:
+                    return False, "Неверный формат файла изображения."
+                
+                # Пытаемся загрузить обложку через API
+                # Используем прямой HTTP запрос, так как в библиотеке может не быть готового метода
+                url = f"{self.client.base_url}/users/{owner_id}/playlists/{playlist_kind}/cover"
+                
+                # Формируем multipart/form-data запрос
+                # Используем requests напрямую, так как _request может не поддерживать files
+                headers = self.client._request.headers.copy()
+                
+                # Формируем multipart/form-data вручную
+                boundary = '----WebKitFormBoundary' + ''.join([str(i) for i in range(16)])
+                body_parts = []
+                
+                # Добавляем revision
+                body_parts.append(f'--{boundary}\r\n')
+                body_parts.append(f'Content-Disposition: form-data; name="revision"\r\n\r\n')
+                body_parts.append(f'{revision}\r\n')
+                
+                # Добавляем файл
+                body_parts.append(f'--{boundary}\r\n')
+                body_parts.append(f'Content-Disposition: form-data; name="file"; filename="cover.jpg"\r\n')
+                body_parts.append(f'Content-Type: image/jpeg\r\n\r\n')
+                body_parts.append(image_data)
+                body_parts.append(f'\r\n--{boundary}--\r\n')
+                
+                body = b''.join([
+                    part.encode('utf-8') if isinstance(part, str) else part 
+                    for part in body_parts
+                ])
+                
+                headers['Content-Type'] = f'multipart/form-data; boundary={boundary}'
+                headers['Content-Length'] = str(len(body))
+                
+                try:
+                    response = requests.post(url, data=body, headers=headers, timeout=30)
+                    if response.status_code == 200:
+                        return True, None
+                    else:
+                        return False, f"Ошибка загрузки: статус {response.status_code}"
+                except Exception as e:
+                    return False, f"Ошибка запроса: {e}"
+            except Exception as e:
+                error_msg = str(e).lower()
+                logger.debug(f"Попытка {attempt + 1}/{max_retries}: ошибка установки обложки: {e}")
+                
+                # Если ошибка связана с revision и есть еще попытки, повторяем
+                if ("wrong-revision" in error_msg or "revision" in error_msg) and attempt < max_retries - 1:
+                    continue
+                
+                # Другая ошибка или все попытки исчерпаны
+                return False, f"Ошибка установки обложки: {e}"
+        
+        return False, "Не удалось установить обложку после нескольких попыток"
+    
+    def get_playlist_cover_url(self, playlist_id: str, owner: Optional[str] = None) -> Optional[str]:
+        """
+        Получить URL обложки плейлиста.
+        
+        Args:
+            playlist_id: ID плейлиста
+            owner: ID владельца (опционально)
+            
+        Returns:
+            URL обложки или None, если обложка не найдена
+        """
+        pl_obj, err = self.get_playlist(playlist_id, owner)
+        if pl_obj is None:
+            return None
+        
+        # Пытаемся получить обложку из различных атрибутов
+        cover = getattr(pl_obj, "cover", None)
+        if cover:
+            # Обложка может быть объектом с различными размерами
+            if hasattr(cover, "uri"):
+                # Формируем полный URL
+                uri = cover.uri
+                if uri.startswith("//"):
+                    return f"https:{uri}"
+                elif uri.startswith("/"):
+                    return f"https://music.yandex.ru{uri}"
+                return uri
+            elif hasattr(cover, "items") and cover.items:
+                # Может быть список обложек
+                first_item = cover.items[0]
+                if hasattr(first_item, "uri"):
+                    uri = first_item.uri
+                    if uri.startswith("//"):
+                        return f"https:{uri}"
+                    elif uri.startswith("/"):
+                        return f"https://music.yandex.ru{uri}"
+                    return uri
+        
+        # Пробуем другие возможные атрибуты
+        for attr_name in ["cover_uri", "og_image", "image"]:
+            attr = getattr(pl_obj, attr_name, None)
+            if attr:
+                if isinstance(attr, str):
+                    if attr.startswith("//"):
+                        return f"https:{attr}"
+                    elif attr.startswith("/"):
+                        return f"https://music.yandex.ru{attr}"
+                    return attr
+        
+        return None
 

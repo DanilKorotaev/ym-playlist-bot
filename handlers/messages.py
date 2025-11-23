@@ -63,6 +63,9 @@ class MessageHandlers:
         if context.user_data.get('edit_playlist_id') is not None:
             # Пользователь в процессе редактирования названия - ConversationHandler должен обработать
             return
+        if context.user_data.get('set_cover_playlist_id') is not None:
+            # Пользователь в процессе установки обложки - ConversationHandler должен обработать
+            return
         
         if text == "📁 Мои плейлисты":
             self.command_handlers.my_playlists(update, context)
@@ -92,6 +95,9 @@ class MessageHandlers:
             return
         if context.user_data.get('edit_playlist_id') is not None:
             # Пользователь в процессе редактирования названия - не обрабатываем
+            return
+        if context.user_data.get('set_cover_playlist_id') is not None:
+            # Пользователь в процессе установки обложки - не обрабатываем
             return
         
         text = (update.effective_message.text or "").strip()
