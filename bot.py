@@ -35,15 +35,20 @@ if not YANDEX_TOKEN:
     raise ValueError("YANDEX_TOKEN не установлен в переменных окружения")
 
 # === Логирование ===
+# Уровень логирования из переменной окружения (по умолчанию INFO)
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
+log_level = getattr(logging, LOG_LEVEL, logging.INFO)
+
 logging.basicConfig(
-    level=logging.INFO,
+    level=log_level,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
 
-# Подавляем некритичные предупреждения
-logging.getLogger('telegram.utils.request').setLevel(logging.ERROR)
-logging.getLogger('apscheduler').setLevel(logging.ERROR)
+# Подавляем некритичные предупреждения (только если не DEBUG)
+if log_level > logging.DEBUG:
+    logging.getLogger('telegram.utils.request').setLevel(logging.ERROR)
+    logging.getLogger('apscheduler').setLevel(logging.ERROR)
 
 # === Инициализация БД и менеджера клиентов ===
 # Создаем БД на основе DB_TYPE из переменных окружения (по умолчанию: sqlite)

@@ -73,6 +73,7 @@ cp .env.example .env
 - `POSTGRES_DB` - имя базы данных (по умолчанию: yandex_music_bot)
 - `PGADMIN_DEFAULT_EMAIL` - email для входа в pgAdmin (по умолчанию: admin@admin.com)
 - `PGADMIN_DEFAULT_PASSWORD` - пароль для входа в pgAdmin (по умолчанию: admin) ⚠️ **Измените в продакшене!**
+- `LOG_LEVEL` - уровень логирования (по умолчанию: INFO). Возможные значения: DEBUG, INFO, WARNING, ERROR, CRITICAL
 
 > **Примечание**: Плейлисты создаются через бота командой `/create_playlist`. Переменные `PLAYLIST_OWNER_ID`, `PLAYLIST_ID`, `PLAYLIST_KIND` больше не требуются.
 
@@ -225,6 +226,30 @@ docker-compose up -d
 docker compose logs -f bot
 # или
 docker-compose logs -f bot
+```
+
+**Включение DEBUG-логирования:**
+
+Для включения подробных debug-логов добавьте в `.env` файл:
+```bash
+LOG_LEVEL=DEBUG
+```
+
+Затем перезапустите контейнер:
+```bash
+docker compose restart bot
+# или
+docker-compose restart bot
+```
+
+Теперь в логах будут видны все debug-сообщения, включая детали запросов к API Яндекс.Музыки.
+
+**Доступные уровни логирования:**
+- `DEBUG` - максимальная детализация (все сообщения)
+- `INFO` - информационные сообщения (по умолчанию)
+- `WARNING` - предупреждения
+- `ERROR` - только ошибки
+- `CRITICAL` - только критические ошибки
 ```
 
 ## Развертывание на хостинге (Linux)

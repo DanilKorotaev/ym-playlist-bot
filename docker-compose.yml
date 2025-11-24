@@ -52,6 +52,7 @@ services:
       DB_NAME: ${POSTGRES_DB:-yandex_music_bot}
       DB_USER: ${POSTGRES_USER:-postgres}
       DB_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
     depends_on:
       postgres:
         condition: service_healthy
