@@ -296,6 +296,12 @@ class CommandHandlers:
             )
             return
         
+        # Синхронизируем данные плейлиста из API (обновляем название и обложку)
+        sync_ok, sync_error = self.playlist_service.sync_playlist_from_api(playlist_id, telegram_id)
+        if sync_ok:
+            # Обновляем объект плейлиста из БД после синхронизации
+            playlist = self.db.get_playlist(playlist_id)
+        
         title = playlist.get("title") or "Без названия"
         is_creator = self.db.is_playlist_creator(playlist_id, telegram_id)
         share_link = self.playlist_service.get_share_link(playlist_id, context.bot.username)

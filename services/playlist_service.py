@@ -271,7 +271,7 @@ class PlaylistService:
     
     def get_playlist_cover_url(self, playlist_id: int, telegram_id: int) -> Optional[str]:
         """
-        Получить URL обложки плейлиста.
+        Получить URL обложки плейлиста из БД или API.
         
         Args:
             playlist_id: ID плейлиста в БД
@@ -284,6 +284,37 @@ class PlaylistService:
         if not playlist:
             return None
         
+        # Сначала проверяем, есть ли сохраненный URL в БД
+        cover_url = playlist.get("cover_url")
+        if cover_url:
+            return cover_url
+        
+        # Если нет в БД, получаем из API
+        client = self.client_manager.get_client_for_playlist(playlist_id)
+        yandex_service = YandexService(client)
+        
+        playlist_kind = playlist["playlist_kind"]
+        owner_id = playlist["owner_id"]
+        
+        # Используем метод из YandexService (только пользовательские обложки)
+        return yandex_service.get_playlist_cover_url(playlist_kind, owner_id, only_custom=True)
+    
+    def sync_playlist_from_api(self, playlist_id: int, telegram_id: int) -> Tuple[bool, Optional[str]]:
+        """
+        Синхронизировать данные плейлиста из API Яндекс.Музыки с БД.
+        Обновляет название и URL обложки (только для пользовательских обложек).
+        
+        Args:
+            playlist_id: ID плейлиста в БД
+            telegram_id: ID пользователя Telegram (не используется, но оставлен для совместимости)
+            
+        Returns:
+            Кортеж (успех, сообщение об ошибке)
+        """
+        playlist = self.db.get_playlist(playlist_id)
+        if not playlist:
+            return False, "Плейлист не найден в БД"
+        
         # Получаем клиент и создаем сервис для работы с API
         client = self.client_manager.get_client_for_playlist(playlist_id)
         yandex_service = YandexService(client)
@@ -291,6 +322,23 @@ class PlaylistService:
         playlist_kind = playlist["playlist_kind"]
         owner_id = playlist["owner_id"]
         
-        # Используем метод из YandexService
-        return yandex_service.get_playlist_cover_url(playlist_kind, owner_id)
+        # Получаем актуальные данные из API
+        title, cover_url, error = yandex_service.get_playlist_info_for_sync(playlist_kind, owner_id)
+        
+        if error:
+            return False, error
+        
+        # Обновляем данные в БД
+        updates = {}
+        if title and title != playlist.get("title"):
+            updates["title"] = title
+        if cover_url != playlist.get("cover_url"):
+            # Обновляем cover_url (может быть None, если обложка не пользовательская)
+            updates["cover_url"] = cover_url
+        
+        if updates:
+            self.db.update_playlist(playlist_id, **updates)
+            logger.debug(f"Синхронизированы данные плейлиста {playlist_id}: {updates}")
+        
+        return True, None
 
