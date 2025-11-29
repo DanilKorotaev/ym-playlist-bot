@@ -349,6 +349,17 @@ class PostgreSQLDatabase(DatabaseInterface):
                 rows = cursor.fetchall()
                 return [dict(row) for row in rows]
     
+    def count_user_playlists(self, telegram_id: int) -> int:
+        """Подсчитать количество созданных пользователем плейлистов."""
+        with self.get_connection() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                cursor.execute("""
+                    SELECT COUNT(*) as count FROM playlists
+                    WHERE creator_telegram_id = %s
+                """, (telegram_id,))
+                row = cursor.fetchone()
+                return row["count"] if row else 0
+    
     def get_shared_playlists(self, telegram_id: int) -> List[Dict]:
         """Получить плейлисты, куда пользователь добавляет (но не создавал)."""
         with self.get_connection() as conn:

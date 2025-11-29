@@ -92,6 +92,11 @@ class DatabaseInterface(ABC):
         pass
     
     @abstractmethod
+    def count_user_playlists(self, telegram_id: int) -> int:
+        """Подсчитать количество созданных пользователем плейлистов."""
+        pass
+    
+    @abstractmethod
     def get_shared_playlists(self, telegram_id: int) -> List[Dict]:
         """Получить плейлисты, куда пользователь добавляет (но не создавал)."""
         pass

@@ -2,6 +2,7 @@
 Обработчики команд Telegram бота.
 """
 import logging
+import os
 from typing import Optional
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import CallbackContext, ConversationHandler
@@ -14,6 +15,10 @@ from services.yandex_service import YandexService
 from .keyboards import get_main_menu_keyboard, get_cancel_keyboard
 
 logger = logging.getLogger(__name__)
+
+# Лимит плейлистов на пользователя (можно задать через переменную окружения)
+DEFAULT_PLAYLIST_LIMIT = 2
+PLAYLIST_LIMIT = int(os.getenv("PLAYLIST_LIMIT", DEFAULT_PLAYLIST_LIMIT))
 
 # FSM States
 WAITING_PLAYLIST_NAME = 1
@@ -152,6 +157,18 @@ class CommandHandlers:
             )
             return WAITING_PLAYLIST_NAME
         
+        # Проверяем лимит плейлистов
+        current_count = self.db.count_user_playlists(telegram_id)
+        if current_count >= PLAYLIST_LIMIT:
+            update.effective_message.reply_text(
+                f"❌ Достигнут лимит плейлистов!\n\n"
+                f"📊 У вас уже создано {current_count} из {PLAYLIST_LIMIT} плейлистов.\n\n"
+                f"💡 Для создания нового плейлиста удалите один из существующих плейлистов.\n"
+                f"Используйте команду /my_playlists, чтобы увидеть ваши плейлисты.",
+                reply_markup=get_main_menu_keyboard()
+            )
+            return ConversationHandler.END
+        
         # Создаем плейлист
         update.effective_message.reply_text("⏳ Создаю плейлист...")
         result = self.client_manager.create_playlist(telegram_id, title)
@@ -188,10 +205,15 @@ class CommandHandlers:
         
         playlists = self.db.get_user_playlists(telegram_id, only_created=True)
         
+        # Получаем информацию о лимите
+        current_count = len(playlists)
+        limit_info = f"📊 {current_count}/{PLAYLIST_LIMIT} плейлистов"
+        
         if not playlists:
             update.effective_message.reply_text(
-                "📁 У вас пока нет созданных плейлистов.\n\n"
-                "💡 Создайте новый плейлист, используя кнопку «➕ Создать плейлист» или команду /create_playlist",
+                f"📁 У вас пока нет созданных плейлистов.\n\n"
+                f"{limit_info}\n\n"
+                f"💡 Создайте новый плейлист, используя кнопку «➕ Создать плейлист» или команду /create_playlist",
                 reply_markup=get_main_menu_keyboard()
             )
             return
@@ -199,7 +221,7 @@ class CommandHandlers:
         # Получаем активный плейлист
         active_id = self.context_manager.get_active_playlist_id(telegram_id)
         
-        lines = ["📁 Ваши плейлисты:\n"]
+        lines = [f"📁 Ваши плейлисты:\n{limit_info}\n"]
         keyboard = []
         
         for i, pl in enumerate(playlists[:10], 1):  # Ограничиваем 10 плейлистами
