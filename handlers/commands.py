@@ -311,11 +311,16 @@ class CommandHandlers:
         tracks_count = self.playlist_service.get_playlist_tracks_count(playlist_id, telegram_id)
         tracks_count_display = tracks_count if tracks_count is not None else 0
         
+        # Получаем информацию о том, куда добавляются треки
+        insert_position = playlist.get("insert_position", "end")
+        position_text = "в начало" if insert_position == "start" else "в конец"
+        
         lines = [
             f"📋 Информация о плейлисте\n",
             f"🎵 Название: {title}",
             f"👤 Ваш статус: {'Создатель' if is_creator else 'Участник'}",
             f"🎶 Треков: {tracks_count_display}",
+            f"📍 Треки добавляются: {position_text}",
         ]
         
         if yandex_link:

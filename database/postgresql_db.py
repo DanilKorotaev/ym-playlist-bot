@@ -114,11 +114,25 @@ class PostgreSQLDatabase(DatabaseInterface):
                         description TEXT,
                         cover_url TEXT,
                         share_token TEXT UNIQUE,
+                        insert_position TEXT DEFAULT 'end' CHECK (insert_position IN ('start', 'end')),
                         created_at TIMESTAMP DEFAULT NOW(),
                         updated_at TIMESTAMP DEFAULT NOW(),
                         FOREIGN KEY (creator_telegram_id) REFERENCES users(telegram_id) ON DELETE CASCADE,
                         FOREIGN KEY (yandex_account_id) REFERENCES yandex_accounts(id) ON DELETE SET NULL
                     )
+                """)
+                
+                # Миграция: добавляем поле insert_position если его нет
+                cursor.execute("""
+                    DO $$ 
+                    BEGIN
+                        IF NOT EXISTS (
+                            SELECT 1 FROM information_schema.columns 
+                            WHERE table_name='playlists' AND column_name='insert_position'
+                        ) THEN
+                            ALTER TABLE playlists ADD COLUMN insert_position TEXT DEFAULT 'end' CHECK (insert_position IN ('start', 'end'));
+                        END IF;
+                    END $$;
                 """)
                 
                 # Таблица доступа к плейлистам (кто может добавлять треки)
@@ -264,16 +278,16 @@ class PostgreSQLDatabase(DatabaseInterface):
     
     def create_playlist(self, playlist_kind: str, owner_id: str, creator_telegram_id: int,
                        yandex_account_id: Optional[int] = None, title: Optional[str] = None,
-                       share_token: Optional[str] = None) -> int:
+                       share_token: Optional[str] = None, insert_position: str = 'end') -> int:
         """Создать новый плейлист."""
         with self.get_connection() as conn:
             with conn.cursor(cursor_factory=RealDictCursor) as cursor:
                 cursor.execute("""
                     INSERT INTO playlists (playlist_kind, owner_id, creator_telegram_id, 
-                                         yandex_account_id, title, share_token)
-                    VALUES (%s, %s, %s, %s, %s, %s)
+                                         yandex_account_id, title, share_token, insert_position)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
                     RETURNING id
-                """, (playlist_kind, owner_id, creator_telegram_id, yandex_account_id, title, share_token))
+                """, (playlist_kind, owner_id, creator_telegram_id, yandex_account_id, title, share_token, insert_position))
                 playlist_id = cursor.fetchone()["id"]
                 
                 # Автоматически даем создателю полный доступ
@@ -350,7 +364,7 @@ class PostgreSQLDatabase(DatabaseInterface):
     
     def update_playlist(self, playlist_id: int, title: Optional[str] = None,
                        description: Optional[str] = None, cover_url: Optional[str] = None,
-                       share_token: Optional[str] = None):
+                       share_token: Optional[str] = None, insert_position: Optional[str] = None):
         """Обновить информацию о плейлисте."""
         with self.get_connection() as conn:
             with conn.cursor(cursor_factory=RealDictCursor) as cursor:
@@ -369,6 +383,9 @@ class PostgreSQLDatabase(DatabaseInterface):
                 if share_token is not None:
                     updates.append("share_token = %s")
                     params.append(share_token)
+                if insert_position is not None:
+                    updates.append("insert_position = %s")
+                    params.append(insert_position)
                 
                 if updates:
                     updates.append("updated_at = NOW()")

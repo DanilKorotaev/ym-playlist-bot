@@ -155,8 +155,12 @@ class MessageHandlers:
                 ok, err = self.playlist_service.add_track(playlist_id, track_obj.id, album_obj.id, telegram_id)
                 if ok:
                     track_display = yandex_service.format_track(track_obj)
+                    # Получаем информацию о том, куда был добавлен трек
+                    playlist = self.db.get_playlist(playlist_id)
+                    insert_position = playlist.get("insert_position", "end") if playlist else "end"
+                    position_text = "в начало" if insert_position == "start" else "в конец"
                     update.effective_message.reply_text(
-                        f"✅ Трек добавлен в «{playlist_title}»:\n"
+                        f"✅ Трек добавлен {position_text} плейлиста «{playlist_title}»:\n"
                         f"🎵 «{track_display}»"
                     )
                 else:

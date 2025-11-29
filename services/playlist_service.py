@@ -60,14 +60,17 @@ class PlaylistService:
         playlist_kind = playlist["playlist_kind"]
         owner_id = playlist["owner_id"]
         
+        # Получаем настройку insert_position из БД (по умолчанию 'end')
+        insert_position = playlist.get("insert_position", "end")
+        
         # Вызываем метод API - он сам получит revision и сделает повторные попытки
         ok, error = yandex_service.insert_track_to_playlist(
-            playlist_kind, track_id, album_id, owner_id
+            playlist_kind, track_id, album_id, owner_id, insert_position=insert_position
         )
         
         if ok:
             # Логируем действие
-            self.db.log_action(telegram_id, "track_added", playlist_id, f"track_id={track_id}")
+            self.db.log_action(telegram_id, "track_added", playlist_id, f"track_id={track_id}, position={insert_position}")
             return True, None
         
         return False, error or "Ошибка вставки трека"

@@ -104,11 +104,14 @@ class CallbackHandlers:
                 return
             
             title = playlist.get("title") or "Плейлист"
+            insert_position = playlist.get("insert_position", "end")
+            position_text = "в начало" if insert_position == "start" else "в конец"
             
             # Создаем клавиатуру с кнопками редактирования
             keyboard = [
                 [InlineKeyboardButton("✏️ Изменить имя", callback_data=f"edit_name_{playlist_id}")],
                 [InlineKeyboardButton("🖼️ Изменить/установить картинку", callback_data=f"set_cover_{playlist_id}")],
+                [InlineKeyboardButton(f"📍 Добавление треков: {position_text}", callback_data=f"toggle_insert_position_{playlist_id}")],
                 [InlineKeyboardButton("🗑️ Удалить плейлист", callback_data=f"delete_playlist_{playlist_id}")],
                 [InlineKeyboardButton("🗑️ Удалить трек", callback_data=f"delete_track_{playlist_id}")]
             ]
@@ -117,6 +120,44 @@ class CallbackHandlers:
             
             query.message.reply_text(
                 f"✏️ Редактирование плейлиста «{title}»\n\n"
+                f"Выберите действие:",
+                reply_markup=reply_markup
+            )
+        elif data.startswith("toggle_insert_position_"):
+            playlist_id = int(data.split("_")[-1])
+            playlist = self.db.get_playlist(playlist_id)
+            if not playlist:
+                query.edit_message_text("❌ Плейлист не найден.")
+                return
+            
+            if not self.db.is_playlist_creator(playlist_id, telegram_id):
+                query.edit_message_text("❌ Только создатель плейлиста может редактировать его.")
+                return
+            
+            # Переключаем insert_position
+            current_position = playlist.get("insert_position", "end")
+            new_position = "start" if current_position == "end" else "end"
+            position_text = "в начало" if new_position == "start" else "в конец"
+            
+            # Обновляем в БД
+            self.db.update_playlist(playlist_id, insert_position=new_position)
+            self.db.log_action(telegram_id, "playlist_insert_position_changed", playlist_id, f"position={new_position}")
+            
+            # Обновляем сообщение с меню редактирования
+            title = playlist.get("title") or "Плейлист"
+            keyboard = [
+                [InlineKeyboardButton("✏️ Изменить имя", callback_data=f"edit_name_{playlist_id}")],
+                [InlineKeyboardButton("🖼️ Изменить/установить картинку", callback_data=f"set_cover_{playlist_id}")],
+                [InlineKeyboardButton(f"📍 Добавление треков: {position_text}", callback_data=f"toggle_insert_position_{playlist_id}")],
+                [InlineKeyboardButton("🗑️ Удалить плейлист", callback_data=f"delete_playlist_{playlist_id}")],
+                [InlineKeyboardButton("🗑️ Удалить трек", callback_data=f"delete_track_{playlist_id}")]
+            ]
+            
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            query.edit_message_text(
+                f"✏️ Редактирование плейлиста «{title}»\n\n"
+                f"✅ Настройка изменена: треки теперь добавляются {position_text}.\n\n"
                 f"Выберите действие:",
                 reply_markup=reply_markup
             )

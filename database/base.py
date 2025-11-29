@@ -63,8 +63,12 @@ class DatabaseInterface(ABC):
     @abstractmethod
     def create_playlist(self, playlist_kind: str, owner_id: str, creator_telegram_id: int,
                        yandex_account_id: Optional[int] = None, title: Optional[str] = None,
-                       share_token: Optional[str] = None) -> int:
-        """Создать новый плейлист."""
+                       share_token: Optional[str] = None, insert_position: str = 'end') -> int:
+        """Создать новый плейлист.
+        
+        Args:
+            insert_position: 'start' для добавления в начало, 'end' для добавления в конец (по умолчанию 'end')
+        """
         pass
     
     @abstractmethod
@@ -95,8 +99,12 @@ class DatabaseInterface(ABC):
     @abstractmethod
     def update_playlist(self, playlist_id: int, title: Optional[str] = None,
                        description: Optional[str] = None, cover_url: Optional[str] = None,
-                       share_token: Optional[str] = None):
-        """Обновить информацию о плейлисте."""
+                       share_token: Optional[str] = None, insert_position: Optional[str] = None):
+        """Обновить информацию о плейлисте.
+        
+        Args:
+            insert_position: 'start' для добавления в начало, 'end' для добавления в конец (None - не обновлять)
+        """
         pass
     
     @abstractmethod

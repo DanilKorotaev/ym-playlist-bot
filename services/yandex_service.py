@@ -141,7 +141,7 @@ class YandexService:
         track_id: Any,
         album_id: Any,
         owner_id: str,
-        at: int = 0,
+        insert_position: str = 'end',
         max_retries: int = 2
     ) -> Tuple[bool, Optional[str]]:
         """
@@ -153,7 +153,7 @@ class YandexService:
             track_id: ID трека
             album_id: ID альбома
             owner_id: ID владельца плейлиста
-            at: Позиция для вставки (по умолчанию 0 - в начало)
+            insert_position: 'start' для добавления в начало, 'end' для добавления в конец (по умолчанию 'end')
             max_retries: Максимальное количество попыток при ошибке revision
             
         Returns:
@@ -167,6 +167,14 @@ class YandexService:
                     return False, "Не удалось получить плейлист."
                 
                 revision = getattr(pl, "revision", 1)
+                
+                # Рассчитываем позицию для вставки
+                if insert_position == 'start':
+                    at = 0
+                else:  # 'end'
+                    # Получаем текущее количество треков в плейлисте
+                    tracks = getattr(pl, "tracks", []) or []
+                    at = len(tracks)
                 
                 # Пытаемся добавить трек
                 self.client.users_playlists_insert_track(
