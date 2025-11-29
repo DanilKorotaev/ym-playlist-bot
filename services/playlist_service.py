@@ -269,6 +269,52 @@ class PlaylistService:
         
         return False, error or "Ошибка установки обложки"
     
+    def edit_playlist_name(
+        self,
+        playlist_id: int,
+        new_name: str,
+        telegram_id: int
+    ) -> Tuple[bool, Optional[str]]:
+        """
+        Изменить название плейлиста в Яндекс.Музыке и обновить в БД.
+        
+        Args:
+            playlist_id: ID плейлиста в БД
+            new_name: Новое название плейлиста
+            telegram_id: ID пользователя Telegram
+            
+        Returns:
+            Кортеж (успех, сообщение об ошибке)
+        """
+        playlist = self.db.get_playlist(playlist_id)
+        if not playlist:
+            return False, "Плейлист не найден."
+        
+        # Проверяем права доступа (только создатель может менять имя)
+        if not self.db.is_playlist_creator(playlist_id, telegram_id):
+            return False, "Только создатель плейлиста может изменять его название."
+        
+        # Получаем клиент и создаем сервис для работы с API
+        client = self.client_manager.get_client_for_playlist(playlist_id)
+        yandex_service = YandexService(client)
+        
+        playlist_kind = playlist["playlist_kind"]
+        owner_id = playlist["owner_id"]
+        
+        # Вызываем метод API для изменения имени в Яндекс.Музыке
+        ok, error = yandex_service.set_playlist_name(
+            playlist_kind, owner_id, new_name
+        )
+        
+        if ok:
+            # Обновляем название в БД
+            self.db.update_playlist(playlist_id, title=new_name)
+            # Логируем действие
+            self.db.log_action(telegram_id, "playlist_name_edited", playlist_id, f"new_title={new_name}")
+            return True, None
+        
+        return False, error or "Ошибка изменения имени плейлиста"
+    
     def get_playlist_cover_url(self, playlist_id: int, telegram_id: int) -> Optional[str]:
         """
         Получить URL обложки плейлиста из БД или API.

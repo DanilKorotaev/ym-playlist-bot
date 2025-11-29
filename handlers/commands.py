@@ -574,12 +574,22 @@ class CommandHandlers:
             )
             return ConversationHandler.END
         
-        self.db.update_playlist(playlist_id, title=new_title)
-        update.effective_message.reply_text(
-            f"✅ Название плейлиста изменено на «{new_title}»",
-            reply_markup=get_main_menu_keyboard()
+        # Используем PlaylistService для изменения имени в Яндекс.Музыке и БД
+        ok, error = self.playlist_service.edit_playlist_name(
+            playlist_id, new_title, telegram_id
         )
-        self.db.log_action(telegram_id, "playlist_name_edited", playlist_id, f"new_title={new_title}")
+        
+        if ok:
+            update.effective_message.reply_text(
+                f"✅ Название плейлиста изменено на «{new_title}»",
+                reply_markup=get_main_menu_keyboard()
+            )
+        else:
+            update.effective_message.reply_text(
+                f"❌ Не удалось изменить название плейлиста.\n\n"
+                f"{error or 'Неизвестная ошибка'}",
+                reply_markup=get_main_menu_keyboard()
+            )
         
         # Очищаем контекст
         context.user_data.pop('edit_playlist_id', None)

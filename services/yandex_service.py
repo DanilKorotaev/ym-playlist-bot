@@ -242,6 +242,53 @@ class YandexService:
         
         return False, "Не удалось удалить трек после нескольких попыток"
     
+    def set_playlist_name(
+        self,
+        playlist_kind: str,
+        owner_id: str,
+        new_name: str,
+        max_retries: int = 2
+    ) -> Tuple[bool, Optional[str]]:
+        """
+        Изменить название плейлиста через API Яндекс.Музыки.
+        
+        Args:
+            playlist_kind: ID плейлиста (kind)
+            owner_id: ID владельца плейлиста
+            new_name: Новое название плейлиста
+            max_retries: Максимальное количество попыток при ошибке
+            
+        Returns:
+            Кортеж (успех, сообщение об ошибке)
+        """
+        for attempt in range(max_retries):
+            try:
+                # Кодируем название для URL
+                encoded_name = urllib.parse.quote(new_name, safe='')
+                
+                # Формируем URL согласно примеру запроса
+                url = f"{self.client.base_url}/users/{owner_id}/playlists/{playlist_kind}/name?value={encoded_name}"
+                
+                # Выполняем POST запрос с пустым телом
+                result = self.client._request.post(url)
+                
+                if result:
+                    return True, None
+                else:
+                    return False, "Запрос выполнен, но ответ пустой."
+            except Exception as e:
+                error_msg = str(e).lower()
+                logger.debug(f"Попытка {attempt + 1}/{max_retries}: ошибка изменения имени плейлиста: {e}")
+                
+                # Если ошибка связана с revision и есть еще попытки, повторяем
+                if ("wrong-revision" in error_msg or "revision" in error_msg) and attempt < max_retries - 1:
+                    continue
+                
+                # Другая ошибка или все попытки исчерпаны
+                return False, f"Ошибка изменения имени: {e}"
+        
+        return False, "Не удалось изменить имя плейлиста после нескольких попыток"
+    
     def extract_track_info(self, track_item: Any) -> Tuple[Optional[Any], Optional[Any]]:
         """
         Извлечь track_id и album_id из объекта трека.
