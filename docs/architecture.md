@@ -32,6 +32,11 @@
     - Получение треков и их количества (возвращает `Optional` для явного указания отсутствия плейлиста)
     - Формирование ссылок для шаринга и Яндекс.Музыки
     - Получение объекта плейлиста из Яндекс.Музыки
+  - `payment_service.py` - бизнес-логика работы с платежами через Telegram Stars
+    - Управление тарифными планами (5, 10, unlimited плейлистов)
+    - Генерация и парсинг invoice payload для платежей
+    - Создание платежей и обработка успешных платежей
+    - Активация подписок после успешной оплаты
 
 ### Utils Layer
 - **UserContextManager** (`utils/context.py`):
@@ -50,6 +55,8 @@
   - `playlists` - плейлисты (включая настройку `insert_position` для выбора места добавления треков)
   - `playlist_access` - права доступа к плейлистам
   - `actions` - история действий пользователей
+  - `user_subscriptions` - подписки пользователей на расширенные лимиты
+  - `payments` - история платежей через Telegram Stars
 
 ### Config
 - **Переменные окружения**: `.env` файл через `python-dotenv`
@@ -70,7 +77,8 @@ ym-playlist-bot/
 │   ├── __init__.py
 │   ├── link_parser.py           # Парсинг ссылок
 │   ├── yandex_service.py        # Работа с API Яндекс.Музыки
-│   └── playlist_service.py      # Бизнес-логика плейлистов
+│   ├── playlist_service.py      # Бизнес-логика плейлистов
+│   └── payment_service.py       # Бизнес-логика платежей через Telegram Stars
 ├── handlers/                    # Обработчики Telegram
 │   ├── __init__.py
 │   ├── commands.py              # Команды бота
@@ -95,6 +103,7 @@ ym-playlist-bot/
    - `PlaylistService` - бизнес-логика (проверка прав, логирование)
    - `handlers` - только обработка Telegram-событий
 7. **Отсутствие дублирования**: Общая логика вынесена в переиспользуемые методы сервисов
+8. **Платежи**: Интеграция с Telegram Stars для монетизации через расширенные лимиты
 
 ## Примеры использования сервисов
 
@@ -181,6 +190,48 @@ else:
 # Формирование ссылок
 share_link = playlist_service.get_share_link(playlist_id=1, bot_username="my_bot")
 yandex_link = playlist_service.get_yandex_link(playlist_id=1)
+```
+
+### Пример 4: Работа с платежами
+
+```python
+from database import create_database
+from services.payment_service import PaymentService
+
+# Инициализация
+db = create_database()
+payment_service = PaymentService(db)
+
+# Получение доступных тарифов
+plans = payment_service.get_available_plans()
+for plan_id, plan_data in plans.items():
+    print(f"{plan_data['name']}: {plan_data['stars']} Stars")
+
+# Создание платежа
+telegram_id = 123456789
+subscription_type = "playlist_limit_5"
+payment_data = payment_service.create_payment(telegram_id, subscription_type)
+
+if payment_data:
+    print(f"Payment ID: {payment_data['payment_id']}")
+    print(f"Payload: {payment_data['payload']}")
+    print(f"Stars amount: {payment_data['stars_amount']}")
+
+# Обработка успешного платежа
+invoice_payload = payment_data['payload']
+stars_amount = payment_data['stars_amount']
+success = payment_service.process_successful_payment(
+    telegram_id=telegram_id,
+    invoice_payload=invoice_payload,
+    stars_amount=stars_amount
+)
+
+if success:
+    print("Подписка активирована!")
+    
+# Получение текущего лимита пользователя (с учетом подписки)
+user_limit = db.get_user_playlist_limit(telegram_id)
+print(f"Текущий лимит: {user_limit} плейлистов" if user_limit != -1 else "Текущий лимит: безлимит")
 ```
 
 ## Планируемые улучшения
