@@ -12,6 +12,7 @@ from yandex_client_manager import YandexClientManager
 from utils.context import UserContextManager
 from services.playlist_service import PlaylistService
 from services.yandex_service import YandexService
+from services.payment_service import PaymentService
 from .keyboards import get_main_menu_keyboard, get_cancel_keyboard
 
 logger = logging.getLogger(__name__)
@@ -157,14 +158,21 @@ class CommandHandlers:
             )
             return WAITING_PLAYLIST_NAME
         
-        # Проверяем лимит плейлистов
+        # Проверяем лимит плейлистов (с учетом подписки)
+        user_limit = self.db.get_user_playlist_limit(telegram_id)
         current_count = self.db.count_user_playlists(telegram_id)
-        if current_count >= PLAYLIST_LIMIT:
+        
+        # Проверка лимита
+        if user_limit == -1:
+            # Unlimited - пропускаем проверку
+            pass
+        elif current_count >= user_limit:
+            # Показываем предложение купить расширенный лимит
+            limit_text = "безлимитно" if user_limit == -1 else f"{user_limit} плейлистов"
             update.effective_message.reply_text(
                 f"❌ Достигнут лимит плейлистов!\n\n"
-                f"📊 У вас уже создано {current_count} из {PLAYLIST_LIMIT} плейлистов.\n\n"
-                f"💡 Для создания нового плейлиста удалите один из существующих плейлистов.\n"
-                f"Используйте команду /my_playlists, чтобы увидеть ваши плейлисты.",
+                f"📊 У вас уже создано {current_count} из {user_limit} плейлистов.\n\n"
+                f"💡 Хотите увеличить лимит? Используйте /buy_limit",
                 reply_markup=get_main_menu_keyboard()
             )
             return ConversationHandler.END
@@ -205,9 +213,11 @@ class CommandHandlers:
         
         playlists = self.db.get_user_playlists(telegram_id, only_created=True)
         
-        # Получаем информацию о лимите
+        # Получаем информацию о лимите (с учетом подписки)
         current_count = len(playlists)
-        limit_info = f"📊 {current_count}/{PLAYLIST_LIMIT} плейлистов"
+        user_limit = self.db.get_user_playlist_limit(telegram_id)
+        limit_text = "∞" if user_limit == -1 else str(user_limit)
+        limit_info = f"📊 {current_count}/{limit_text} плейлистов"
         
         if not playlists:
             update.effective_message.reply_text(
@@ -1015,4 +1025,106 @@ class CommandHandlers:
             reply_markup=get_main_menu_keyboard()
         )
         return ConversationHandler.END
+    
+    def buy_limit(self, update: Update, context: CallbackContext):
+        """Команда для покупки расширенного лимита."""
+        telegram_id = update.effective_user.id
+        self.db.ensure_user(telegram_id, update.effective_user.username)
+        
+        # Получаем доступные планы
+        payment_service = PaymentService(self.db)
+        plans = payment_service.get_available_plans()
+        
+        # Получаем текущий лимит пользователя
+        current_limit = self.db.get_user_playlist_limit(telegram_id)
+        current_count = self.db.count_user_playlists(telegram_id)
+        limit_text = "безлимитно" if current_limit == -1 else f"{current_limit} плейлистов"
+        
+        # Формируем клавиатуру с тарифами
+        keyboard = []
+        for plan_id, plan_data in plans.items():
+            button_text = f"⭐ {plan_data['name']} — {plan_data['stars']} Stars"
+            keyboard.append([InlineKeyboardButton(
+                button_text,
+                callback_data=f"buy_{plan_id}"
+            )])
+        keyboard.append([InlineKeyboardButton("❌ Отмена", callback_data="cancel_payment")])
+        
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        update.effective_message.reply_text(
+            f"💳 Выберите тарифный план:\n\n"
+            f"📊 Текущий лимит: {limit_text}\n"
+            f"📁 Создано плейлистов: {current_count}\n\n"
+            f"⭐ Stars — это внутренняя валюта Telegram\n"
+            f"Вы можете купить Stars прямо в приложении Telegram",
+            reply_markup=reply_markup
+        )
+    
+    def handle_pre_checkout_query(self, update: Update, context: CallbackContext):
+        """Обработка pre_checkout_query."""
+        query = update.pre_checkout_query
+        telegram_id = query.from_user.id
+        
+        # Проверяем платеж
+        payment_service = PaymentService(self.db)
+        payment = self.db.get_payment_by_payload(query.invoice_payload)
+        
+        if not payment or payment['status'] != 'pending':
+            # Отклоняем платеж
+            context.bot.answer_pre_checkout_query(
+                pre_checkout_query_id=query.id,
+                ok=False,
+                error_message="Платеж не найден или уже обработан"
+            )
+            return
+        
+        # Проверяем сумму
+        if payment['stars_amount'] != query.total_amount:
+            context.bot.answer_pre_checkout_query(
+                pre_checkout_query_id=query.id,
+                ok=False,
+                error_message="Сумма платежа не совпадает"
+            )
+            return
+        
+        # Подтверждаем платеж
+        context.bot.answer_pre_checkout_query(
+            pre_checkout_query_id=query.id,
+            ok=True
+        )
+    
+    def handle_successful_payment(self, update: Update, context: CallbackContext):
+        """Обработка успешного платежа."""
+        payment = update.message.successful_payment
+        telegram_id = update.effective_user.id
+        
+        payment_service = PaymentService(self.db)
+        success = payment_service.process_successful_payment(
+            telegram_id=telegram_id,
+            invoice_payload=payment.invoice_payload,
+            stars_amount=payment.total_amount
+        )
+        
+        if success:
+            # Получаем информацию о новой подписке
+            subscription = self.db.get_active_subscription(telegram_id)
+            if subscription:
+                plan = payment_service.get_available_plans()[subscription['subscription_type']]
+                limit = plan['limit']
+                limit_text = "безлимитно" if limit == -1 else f"{limit} плейлистов"
+                
+                update.message.reply_text(
+                    f"✅ Платеж успешно обработан!\n\n"
+                    f"🎉 Ваш лимит увеличен до {limit_text}\n\n"
+                    f"Теперь вы можете создавать больше плейлистов!",
+                    reply_markup=get_main_menu_keyboard()
+                )
+                self.db.log_action(telegram_id, "subscription_purchased", None, f"type={subscription['subscription_type']}")
+        else:
+            update.message.reply_text(
+                "❌ Произошла ошибка при обработке платежа.\n"
+                "Пожалуйста, свяжитесь с поддержкой.",
+                reply_markup=get_main_menu_keyboard()
+            )
 

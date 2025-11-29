@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 
 from telegram.ext import (
     Updater, CommandHandler, MessageHandler, Filters, CallbackContext,
-    CallbackQueryHandler, ConversationHandler
+    CallbackQueryHandler, ConversationHandler, PreCheckoutQueryHandler
 )
 
 from database import create_database
@@ -221,6 +221,13 @@ def main():
         )
         
         dp.add_handler(set_cover_conv)
+        
+        # Обработчики платежей
+        dp.add_handler(PreCheckoutQueryHandler(command_handlers.handle_pre_checkout_query))
+        dp.add_handler(MessageHandler(Filters.successful_payment, command_handlers.handle_successful_payment))
+        
+        # Команда покупки лимита
+        dp.add_handler(CommandHandler("buy_limit", command_handlers.buy_limit))
         
         # Inline-кнопки
         dp.add_handler(CallbackQueryHandler(callback_handlers.button_callback))

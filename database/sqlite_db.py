@@ -5,6 +5,7 @@ import sqlite3
 import logging
 import os
 from typing import Optional, List, Dict
+from datetime import datetime
 from contextlib import contextmanager
 
 from .base import DatabaseInterface
@@ -126,6 +127,35 @@ class SQLiteDatabase(DatabaseInterface):
                 )
             """)
             
+            # Таблица подписок пользователей
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS user_subscriptions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    telegram_id INTEGER NOT NULL,
+                    subscription_type TEXT NOT NULL,
+                    stars_amount INTEGER NOT NULL,
+                    purchased_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    expires_at TIMESTAMP,
+                    is_active BOOLEAN DEFAULT 1,
+                    FOREIGN KEY (telegram_id) REFERENCES users(telegram_id)
+                )
+            """)
+            
+            # Таблица платежей
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS payments (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    telegram_id INTEGER NOT NULL,
+                    invoice_payload TEXT NOT NULL UNIQUE,
+                    stars_amount INTEGER NOT NULL,
+                    subscription_type TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    completed_at TIMESTAMP,
+                    FOREIGN KEY (telegram_id) REFERENCES users(telegram_id)
+                )
+            """)
+            
             # Индексы для ускорения запросов
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_playlist_creator ON playlists(creator_telegram_id)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_playlist_share_token ON playlists(share_token)")
@@ -134,6 +164,10 @@ class SQLiteDatabase(DatabaseInterface):
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_actions_user ON actions(telegram_id)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_actions_playlist ON actions(playlist_id)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_yandex_account_telegram ON yandex_accounts(telegram_id)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_user_subscriptions_telegram_id ON user_subscriptions(telegram_id)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_user_subscriptions_active ON user_subscriptions(telegram_id, is_active)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_payments_telegram_id ON payments(telegram_id)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_payments_payload ON payments(invoice_payload)")
             
             conn.commit()
             logger.info("База данных SQLite инициализирована")
@@ -458,4 +492,111 @@ class SQLiteDatabase(DatabaseInterface):
             """, (playlist_id, limit))
             rows = cursor.fetchall()
             return [dict(row) for row in rows]
+    
+    # === Работа с подписками и лимитами ===
+    
+    def get_user_playlist_limit(self, telegram_id: int) -> int:
+        """Получить текущий лимит плейлистов для пользователя."""
+        import os
+        DEFAULT_PLAYLIST_LIMIT = 2
+        PLAYLIST_LIMIT = int(os.getenv("PLAYLIST_LIMIT", DEFAULT_PLAYLIST_LIMIT))
+        
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            # Получаем активную подписку
+            cursor.execute("""
+                SELECT subscription_type FROM user_subscriptions
+                WHERE telegram_id = ? AND is_active = 1
+                AND (expires_at IS NULL OR expires_at > datetime('now'))
+                ORDER BY purchased_at DESC
+                LIMIT 1
+            """, (telegram_id,))
+            row = cursor.fetchone()
+            
+            if row:
+                subscription_type = row["subscription_type"]
+                # Парсим тип подписки для получения лимита
+                if subscription_type == "playlist_limit_unlimited":
+                    return -1
+                elif subscription_type.startswith("playlist_limit_"):
+                    try:
+                        limit_str = subscription_type.replace("playlist_limit_", "")
+                        if limit_str == "unlimited":
+                            return -1
+                        return int(limit_str)
+                    except ValueError:
+                        pass
+            
+            return PLAYLIST_LIMIT
+    
+    def create_subscription(self, telegram_id: int, subscription_type: str, 
+                           stars_amount: int, expires_at: Optional[datetime] = None) -> int:
+        """Создать подписку для пользователя."""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            # Деактивируем старые подписки того же типа
+            cursor.execute("""
+                UPDATE user_subscriptions
+                SET is_active = 0
+                WHERE telegram_id = ? AND subscription_type = ? AND is_active = 1
+            """, (telegram_id, subscription_type))
+            
+            # Создаем новую подписку
+            expires_at_str = expires_at.strftime("%Y-%m-%d %H:%M:%S") if expires_at else None
+            cursor.execute("""
+                INSERT INTO user_subscriptions 
+                (telegram_id, subscription_type, stars_amount, expires_at)
+                VALUES (?, ?, ?, ?)
+            """, (telegram_id, subscription_type, stars_amount, expires_at_str))
+            return cursor.lastrowid
+    
+    def get_active_subscription(self, telegram_id: int) -> Optional[Dict]:
+        """Получить активную подписку пользователя."""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT * FROM user_subscriptions
+                WHERE telegram_id = ? AND is_active = 1
+                AND (expires_at IS NULL OR expires_at > datetime('now'))
+                ORDER BY purchased_at DESC
+                LIMIT 1
+            """, (telegram_id,))
+            row = cursor.fetchone()
+            return dict(row) if row else None
+    
+    # === Работа с платежами ===
+    
+    def create_payment(self, telegram_id: int, invoice_payload: str, 
+                      stars_amount: int, subscription_type: str) -> int:
+        """Создать запись о платеже."""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO payments 
+                (telegram_id, invoice_payload, stars_amount, subscription_type, status)
+                VALUES (?, ?, ?, ?, 'pending')
+            """, (telegram_id, invoice_payload, stars_amount, subscription_type))
+            return cursor.lastrowid
+    
+    def update_payment_status(self, invoice_payload: str, status: str):
+        """Обновить статус платежа."""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            completed_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S") if status == "completed" else None
+            cursor.execute("""
+                UPDATE payments
+                SET status = ?, completed_at = ?
+                WHERE invoice_payload = ?
+            """, (status, completed_at, invoice_payload))
+    
+    def get_payment_by_payload(self, invoice_payload: str) -> Optional[Dict]:
+        """Получить платеж по payload."""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT * FROM payments
+                WHERE invoice_payload = ?
+            """, (invoice_payload,))
+            row = cursor.fetchone()
+            return dict(row) if row else None
 

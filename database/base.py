@@ -154,4 +154,82 @@ class DatabaseInterface(ABC):
     def get_playlist_actions(self, playlist_id: int, limit: int = 100) -> List[Dict]:
         """Получить последние действия с плейлистом."""
         pass
+    
+    # === Работа с подписками и лимитами ===
+    
+    @abstractmethod
+    def get_user_playlist_limit(self, telegram_id: int) -> int:
+        """Получить текущий лимит плейлистов для пользователя.
+        
+        Возвращает:
+            - Базовый лимит (PLAYLIST_LIMIT), если нет активной подписки
+            - Лимит из активной подписки, если есть
+            - -1 для unlimited
+        """
+        pass
+    
+    @abstractmethod
+    def create_subscription(self, telegram_id: int, subscription_type: str, 
+                           stars_amount: int, expires_at: Optional['datetime'] = None) -> int:
+        """Создать подписку для пользователя.
+        
+        Args:
+            telegram_id: ID пользователя Telegram
+            subscription_type: Тип подписки (например, 'playlist_limit_5')
+            stars_amount: Количество Stars, заплаченных за подписку
+            expires_at: Дата истечения подписки (None для бессрочных)
+        
+        Returns:
+            ID созданной подписки
+        """
+        pass
+    
+    @abstractmethod
+    def get_active_subscription(self, telegram_id: int) -> Optional[Dict]:
+        """Получить активную подписку пользователя.
+        
+        Returns:
+            Словарь с данными подписки или None, если нет активной подписки
+        """
+        pass
+    
+    # === Работа с платежами ===
+    
+    @abstractmethod
+    def create_payment(self, telegram_id: int, invoice_payload: str, 
+                      stars_amount: int, subscription_type: str) -> int:
+        """Создать запись о платеже.
+        
+        Args:
+            telegram_id: ID пользователя Telegram
+            invoice_payload: Уникальный идентификатор платежа
+            stars_amount: Количество Stars
+            subscription_type: Тип подписки
+        
+        Returns:
+            ID созданного платежа
+        """
+        pass
+    
+    @abstractmethod
+    def update_payment_status(self, invoice_payload: str, status: str):
+        """Обновить статус платежа.
+        
+        Args:
+            invoice_payload: Уникальный идентификатор платежа
+            status: Новый статус ('pending', 'completed', 'failed')
+        """
+        pass
+    
+    @abstractmethod
+    def get_payment_by_payload(self, invoice_payload: str) -> Optional[Dict]:
+        """Получить платеж по payload.
+        
+        Args:
+            invoice_payload: Уникальный идентификатор платежа
+        
+        Returns:
+            Словарь с данными платежа или None, если не найден
+        """
+        pass
 

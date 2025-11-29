@@ -2,11 +2,12 @@
 Обработчики callback query для Telegram бота.
 """
 import logging
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, LabeledPrice
 from telegram.ext import CallbackContext
 
 from database import DatabaseInterface
 from utils.context import UserContextManager
+from services.payment_service import PaymentService
 from .keyboards import get_main_menu_keyboard
 
 logger = logging.getLogger(__name__)
@@ -160,5 +161,52 @@ class CallbackHandlers:
                 f"✅ Настройка изменена: треки теперь добавляются {position_text}.\n\n"
                 f"Выберите действие:",
                 reply_markup=reply_markup
+            )
+        elif data.startswith("buy_"):
+            # Обработка покупки подписки
+            plan_id = data.replace("buy_", "")
+            payment_service = PaymentService(self.db)
+            payment_data = payment_service.create_payment(telegram_id, plan_id)
+            
+            if not payment_data:
+                query.answer("Ошибка при создании платежа", show_alert=True)
+                return
+            
+            plan = payment_service.get_available_plans()[plan_id]
+            
+            # Создаем инвойс
+            try:
+                invoice_link = context.bot.create_invoice_link(
+                    title=f"Расширенный лимит: {plan['name']}",
+                    description=f"Увеличьте лимит плейлистов до {plan['name']}",
+                    payload=payment_data['payload'],
+                    provider_token="",  # Не требуется для Stars
+                    currency="XTR",  # Telegram Stars
+                    prices=[LabeledPrice(label=plan['name'], amount=plan['stars'])]
+                )
+                
+                # Отправляем сообщение с кнопкой оплаты
+                keyboard = InlineKeyboardMarkup([[
+                    InlineKeyboardButton("💳 Оплатить", url=invoice_link)
+                ], [
+                    InlineKeyboardButton("❌ Отмена", callback_data="cancel_payment")
+                ]])
+                
+                query.message.reply_text(
+                    f"💳 Оплата: {plan['name']}\n\n"
+                    f"💰 Стоимость: {plan['stars']} Stars\n\n"
+                    f"Нажмите кнопку ниже для оплаты:",
+                    reply_markup=keyboard
+                )
+                
+                query.answer()
+            except Exception as e:
+                logger.error(f"Ошибка при создании инвойса: {e}")
+                query.answer("Ошибка при создании платежа", show_alert=True)
+        elif data == "cancel_payment":
+            query.answer()
+            query.message.reply_text(
+                "❌ Покупка отменена.",
+                reply_markup=get_main_menu_keyboard()
             )
 
