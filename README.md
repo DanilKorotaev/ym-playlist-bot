@@ -541,10 +541,48 @@ ym-playlist-bot/
 ├── .env.example                 # Шаблон переменных окружения
 ├── .gitignore                   # Игнорируемые файлы для Git
 ├── docs/                        # Документация
+│   ├── architecture.md         # Архитектура проекта
+│   ├── commands.md             # Документация команд бота
+│   ├── features.md             # Описание функциональности
+│   ├── database_backup.md      # Документация по бекапам БД
+│   ├── database_migration.md   # Документация по миграции БД
+│   └── ...
+├── scripts/                    # Скрипты для автоматизации
+│   ├── backup_db.sh           # Скрипт создания бекапов
+│   ├── restore_db.sh          # Скрипт восстановления из бекапа
+│   └── migrate_db.sh          # Скрипт миграции БД между серверами
 └── README.md                    # Этот файл
 ```
 
 Подробную информацию об архитектуре см. в [docs/architecture.md](docs/architecture.md)
+
+## Резервное копирование и миграция базы данных
+
+Для обеспечения безопасности данных и возможности миграции между серверами создана документация и скрипты автоматизации:
+
+- **Бекапы БД**: [docs/database_backup.md](docs/database_backup.md) - стратегия и процесс создания резервных копий
+- **Миграция БД**: [docs/database_migration.md](docs/database_migration.md) - миграция базы данных между серверами
+
+### Быстрый старт
+
+**Создание бекапа:**
+```bash
+./scripts/backup_db.sh
+```
+
+**Восстановление из бекапа:**
+```bash
+./scripts/restore_db.sh backups/backup_YYYYMMDD_HHMMSS.sql.gz
+```
+
+**Миграция на другой сервер:**
+```bash
+# На исходном сервере
+./scripts/migrate_db.sh export
+
+# На новом сервере
+./scripts/migrate_db.sh import migration/migration_dump_YYYYMMDD_HHMMSS.sql.gz
+```
 
 ## Безопасность
 
