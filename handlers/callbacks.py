@@ -7,6 +7,14 @@ from telegram.ext import CallbackContext
 
 from database import DatabaseInterface
 from utils.context import UserContextManager
+from utils.message_helpers import (
+    edit_message,
+    reply_to_message,
+    PLAYLIST_NOT_FOUND,
+    NO_PLAYLIST_ACCESS,
+    ONLY_CREATOR_CAN_DELETE,
+    ONLY_CREATOR_CAN_EDIT
+)
 from services.payment_service import PaymentService
 from .keyboards import get_main_menu_keyboard
 
@@ -67,18 +75,12 @@ class CallbackHandlers:
         """Обработка выбора плейлиста."""
         playlist = self.db.get_playlist(playlist_id)
         if not playlist:
-            query.edit_message_text(
-                "❌ Плейлист не найден.",
-                reply_markup=None
-            )
+            edit_message(query, PLAYLIST_NOT_FOUND, reply_markup=None)
             return
         
         # Проверяем доступ
         if not self.db.check_playlist_access(playlist_id, telegram_id):
-            query.edit_message_text(
-                "❌ У вас нет доступа к этому плейлисту.",
-                reply_markup=None
-            )
+            edit_message(query, NO_PLAYLIST_ACCESS, reply_markup=None)
             return
         
         # Устанавливаем как активный
@@ -98,11 +100,11 @@ class CallbackHandlers:
         """Обработка удаления плейлиста."""
         playlist = self.db.get_playlist(playlist_id)
         if not playlist:
-            query.edit_message_text("❌ Плейлист не найден.")
+            edit_message(query, PLAYLIST_NOT_FOUND)
             return
         
         if not self.db.is_playlist_creator(playlist_id, telegram_id):
-            query.edit_message_text("❌ Только создатель плейлиста может удалять его.")
+            edit_message(query, ONLY_CREATOR_CAN_DELETE)
             return
         
         title = playlist.get("title") or "плейлист"
@@ -122,17 +124,18 @@ class CallbackHandlers:
         """Обработка открытия меню редактирования плейлиста."""
         playlist = self.db.get_playlist(playlist_id)
         if not playlist:
-            query.edit_message_text("❌ Плейлист не найден.")
+            edit_message(query, PLAYLIST_NOT_FOUND)
             return
         
         if not self.db.is_playlist_creator(playlist_id, telegram_id):
-            query.edit_message_text("❌ Только создатель плейлиста может редактировать его.")
+            edit_message(query, ONLY_CREATOR_CAN_EDIT)
             return
         
         title = playlist.get("title") or "Плейлист"
         reply_markup = self._create_edit_playlist_keyboard(playlist_id, playlist)
         
-        query.message.reply_text(
+        reply_to_message(
+            query.message,
             f"✏️ Редактирование плейлиста «{title}»\n\n"
             f"Выберите действие:",
             reply_markup=reply_markup
@@ -142,11 +145,11 @@ class CallbackHandlers:
         """Обработка переключения позиции вставки треков."""
         playlist = self.db.get_playlist(playlist_id)
         if not playlist:
-            query.edit_message_text("❌ Плейлист не найден.")
+            edit_message(query, PLAYLIST_NOT_FOUND)
             return
         
         if not self.db.is_playlist_creator(playlist_id, telegram_id):
-            query.edit_message_text("❌ Только создатель плейлиста может редактировать его.")
+            edit_message(query, ONLY_CREATOR_CAN_EDIT)
             return
         
         # Переключаем insert_position
@@ -201,7 +204,8 @@ class CallbackHandlers:
                 InlineKeyboardButton("❌ Отмена", callback_data="cancel_payment")
             ]])
             
-            query.message.reply_text(
+            reply_to_message(
+                query.message,
                 f"💳 Оплата: {plan['name']}\n\n"
                 f"💰 Стоимость: {plan['stars']} Stars\n\n"
                 f"Нажмите кнопку ниже для оплаты:",
@@ -216,9 +220,10 @@ class CallbackHandlers:
     def _handle_cancel_payment(self, query):
         """Обработка отмены покупки."""
         query.answer()
-        query.message.reply_text(
+        reply_to_message(
+            query.message,
             "❌ Покупка отменена.",
-            reply_markup=get_main_menu_keyboard()
+            use_main_menu=True
         )
     
     def _create_edit_playlist_keyboard(self, playlist_id: int, playlist: dict) -> InlineKeyboardMarkup:

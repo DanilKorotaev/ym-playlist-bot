@@ -8,6 +8,14 @@ from telegram.ext import CallbackContext
 from database import DatabaseInterface
 from yandex_client_manager import YandexClientManager
 from utils.context import UserContextManager
+from utils.message_helpers import (
+    send_message,
+    NO_ACTIVE_PLAYLIST,
+    NO_ADD_PERMISSION,
+    LOADING_PLAYLIST,
+    LOADING_ALBUM,
+    LOADING_TRACK
+)
 from services.link_parser import parse_track_link, parse_playlist_link, parse_album_link, parse_share_link
 from services.yandex_service import YandexService
 from services.playlist_service import PlaylistService
@@ -106,21 +114,17 @@ class MessageHandlers:
         playlist_id = self.context_manager.get_active_playlist_id(telegram_id)
         
         if not playlist_id:
-            update.effective_message.reply_text(
-                "❌ У вас нет активного плейлиста.\n\n"
-                "💡 Создайте плейлист, используя кнопку «➕ Создать плейлист», или получите доступ к существующему.",
-                reply_markup=get_main_menu_keyboard()
-            )
+            send_message(update, NO_ACTIVE_PLAYLIST, use_main_menu=True)
             return
         
         # Проверяем доступ
         if not self.db.check_playlist_access(playlist_id, telegram_id, need_add=True):
             playlist = self.db.get_playlist(playlist_id)
             title = playlist.get("title") or "плейлист" if playlist else "плейлист"
-            update.effective_message.reply_text(
-                f"❌ У вас нет прав на добавление треков в плейлист «{title}».\n\n"
-                f"💡 Обратитесь к создателю плейлиста для получения доступа.",
-                reply_markup=get_main_menu_keyboard()
+            send_message(
+                update,
+                NO_ADD_PERMISSION.format(title=title),
+                use_main_menu=True
             )
             return
         
@@ -135,7 +139,7 @@ class MessageHandlers:
         tr = parse_track_link(text)
         if tr:
             try:
-                update.effective_message.reply_text("⏳ Добавляю трек...")
+                send_message(update, LOADING_TRACK)
                 track_obj = yandex_service.get_track(tr)
                 if not track_obj:
                     update.effective_message.reply_text(
@@ -179,7 +183,7 @@ class MessageHandlers:
         # Плейлист
         owner, pid = parse_playlist_link(text)
         if pid:
-            update.effective_message.reply_text("⏳ Загружаю треки из плейлиста...")
+            send_message(update, LOADING_PLAYLIST)
             pl_obj, err = yandex_service.get_playlist(pid, owner)
             if pl_obj is None:
                 update.effective_message.reply_text(
@@ -213,7 +217,7 @@ class MessageHandlers:
         # Альбом
         alb_id = parse_album_link(text)
         if alb_id:
-            update.effective_message.reply_text("⏳ Загружаю треки из альбома...")
+            send_message(update, LOADING_ALBUM)
             tracks = yandex_service.get_album_tracks(alb_id)
             if not tracks:
                 update.effective_message.reply_text(

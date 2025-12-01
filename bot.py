@@ -70,11 +70,8 @@ def error_handler(update: object, context: CallbackContext):
     logger.error(f"Ошибка при обработке обновления: {context.error}")
     if update and hasattr(update, 'effective_message'):
         try:
-            update.effective_message.reply_text(
-                "❌ Произошла ошибка при обработке запроса.\n\n"
-                "💡 Попробуйте еще раз или используйте /start для возврата в главное меню.",
-                reply_markup=get_main_menu_keyboard()
-            )
+            from utils.message_helpers import send_message, GENERAL_ERROR
+            send_message(update, GENERAL_ERROR, use_main_menu=True)
         except:
             pass
 

@@ -10,6 +10,18 @@ from telegram.ext import CallbackContext, ConversationHandler
 from database import DatabaseInterface
 from yandex_client_manager import YandexClientManager
 from utils.context import UserContextManager
+from utils.message_helpers import (
+    send_message,
+    NO_ACTIVE_PLAYLIST,
+    NO_ACTIVE_PLAYLIST_SELECT,
+    NO_ACTIVE_PLAYLIST_SHORT,
+    PLAYLIST_NOT_FOUND,
+    PLAYLIST_NOT_FOUND_ERROR,
+    NO_PLAYLIST_ACCESS,
+    ONLY_CREATOR_CAN_CHANGE_NAME,
+    ONLY_CREATOR_CAN_CHANGE_COVER,
+    CREATING_PLAYLIST
+)
 from services.playlist_service import PlaylistService
 from services.yandex_service import YandexService
 from services.payment_service import PaymentService
@@ -178,7 +190,7 @@ class CommandHandlers:
             return ConversationHandler.END
         
         # Создаем плейлист
-        update.effective_message.reply_text("⏳ Создаю плейлист...")
+        send_message(update, CREATING_PLAYLIST)
         result = self.client_manager.create_playlist(telegram_id, title)
         
         if result:
@@ -305,27 +317,17 @@ class CommandHandlers:
         playlist_id = self.context_manager.get_active_playlist_id(telegram_id)
         
         if not playlist_id:
-            update.effective_message.reply_text(
-                "❌ У вас нет активного плейлиста.\n\n"
-                "💡 Используйте кнопки «📁 Мои плейлисты» или «📂 Общие плейлисты», чтобы выбрать плейлист.",
-                reply_markup=get_main_menu_keyboard()
-            )
+            send_message(update, NO_ACTIVE_PLAYLIST_SELECT, use_main_menu=True)
             return
         
         playlist = self.db.get_playlist(playlist_id)
         if not playlist:
-            update.effective_message.reply_text(
-                "❌ Плейлист не найден.",
-                reply_markup=get_main_menu_keyboard()
-            )
+            send_message(update, PLAYLIST_NOT_FOUND, use_main_menu=True)
             return
         
         # Проверяем доступ
         if not self.db.check_playlist_access(playlist_id, telegram_id):
-            update.effective_message.reply_text(
-                "❌ У вас нет доступа к этому плейлисту.",
-                reply_markup=get_main_menu_keyboard()
-            )
+            send_message(update, NO_PLAYLIST_ACCESS, use_main_menu=True)
             return
         
         # Синхронизируем данные плейлиста из API (обновляем название и обложку)
@@ -389,27 +391,17 @@ class CommandHandlers:
         playlist_id = self.context_manager.get_active_playlist_id(telegram_id)
         
         if not playlist_id:
-            update.effective_message.reply_text(
-                "❌ У вас нет активного плейлиста.\n\n"
-                "💡 Используйте кнопки «📁 Мои плейлисты» или «📂 Общие плейлисты», чтобы выбрать плейлист.",
-                reply_markup=get_main_menu_keyboard()
-            )
+            send_message(update, NO_ACTIVE_PLAYLIST_SELECT, use_main_menu=True)
             return
         
         playlist = self.db.get_playlist(playlist_id)
         if not playlist:
-            update.effective_message.reply_text(
-                "❌ Плейлист не найден.",
-                reply_markup=get_main_menu_keyboard()
-            )
+            send_message(update, PLAYLIST_NOT_FOUND, use_main_menu=True)
             return
         
         # Проверяем доступ
         if not self.db.check_playlist_access(playlist_id, telegram_id):
-            update.effective_message.reply_text(
-                "❌ У вас нет доступа к этому плейлисту.",
-                reply_markup=get_main_menu_keyboard()
-            )
+            send_message(update, NO_PLAYLIST_ACCESS, use_main_menu=True)
             return
         
         tracks = self.playlist_service.get_playlist_tracks(playlist_id, telegram_id)
@@ -526,38 +518,17 @@ class CommandHandlers:
         if not playlist_id:
             playlist_id = self.context_manager.get_active_playlist_id(telegram_id)
         if not playlist_id:
-            update.effective_message.reply_text(
-                "❌ У вас нет активного плейлиста.",
-                reply_markup=get_main_menu_keyboard()
-            )
+            send_message(update, NO_ACTIVE_PLAYLIST_SHORT, use_main_menu=True)
             return ConversationHandler.END
         
         # Проверяем, что плейлист существует
         playlist = self.db.get_playlist(playlist_id)
         if not playlist:
-            if update.callback_query:
-                update.callback_query.message.reply_text(
-                    "❌ Плейлист не найден.",
-                    reply_markup=get_main_menu_keyboard()
-                )
-            else:
-                update.effective_message.reply_text(
-                    "❌ Плейлист не найден.",
-                    reply_markup=get_main_menu_keyboard()
-                )
+            send_message(update, PLAYLIST_NOT_FOUND, use_main_menu=True)
             return ConversationHandler.END
         
         if not self.db.is_playlist_creator(playlist_id, telegram_id):
-            if update.callback_query:
-                update.callback_query.message.reply_text(
-                    "❌ Только создатель плейлиста может изменять название.",
-                    reply_markup=get_main_menu_keyboard()
-                )
-            else:
-                update.effective_message.reply_text(
-                    "❌ Только создатель плейлиста может изменять название.",
-                    reply_markup=get_main_menu_keyboard()
-                )
+            send_message(update, ONLY_CREATOR_CAN_CHANGE_NAME, use_main_menu=True)
             return ConversationHandler.END
         
         context.user_data['edit_playlist_id'] = playlist_id
@@ -605,10 +576,7 @@ class CommandHandlers:
         
         playlist_id = context.user_data.get('edit_playlist_id')
         if not playlist_id:
-            update.effective_message.reply_text(
-                "❌ Ошибка: плейлист не найден.",
-                reply_markup=get_main_menu_keyboard()
-            )
+            send_message(update, PLAYLIST_NOT_FOUND_ERROR, use_main_menu=True)
             return ConversationHandler.END
         
         # Используем PlaylistService для изменения имени в Яндекс.Музыке и БД
@@ -805,10 +773,7 @@ class CommandHandlers:
         total = context.user_data.get('delete_track_total')
         
         if not playlist_id:
-            update.effective_message.reply_text(
-                "❌ Ошибка: плейлист не найден.",
-                reply_markup=get_main_menu_keyboard()
-            )
+            send_message(update, PLAYLIST_NOT_FOUND_ERROR, use_main_menu=True)
             return ConversationHandler.END
         
         if index < 1 or index > total:
@@ -919,29 +884,11 @@ class CommandHandlers:
         # Проверяем, что плейлист существует
         playlist = self.db.get_playlist(playlist_id)
         if not playlist:
-            if update.callback_query:
-                update.callback_query.message.reply_text(
-                    "❌ Плейлист не найден.",
-                    reply_markup=get_main_menu_keyboard()
-                )
-            else:
-                update.effective_message.reply_text(
-                    "❌ Плейлист не найден.",
-                    reply_markup=get_main_menu_keyboard()
-                )
+            send_message(update, PLAYLIST_NOT_FOUND, use_main_menu=True)
             return ConversationHandler.END
         
         if not self.db.is_playlist_creator(playlist_id, telegram_id):
-            if update.callback_query:
-                update.callback_query.message.reply_text(
-                    "❌ Только создатель плейлиста может изменять обложку.",
-                    reply_markup=get_main_menu_keyboard()
-                )
-            else:
-                update.effective_message.reply_text(
-                    "❌ Только создатель плейлиста может изменять обложку.",
-                    reply_markup=get_main_menu_keyboard()
-                )
+            send_message(update, ONLY_CREATOR_CAN_CHANGE_COVER, use_main_menu=True)
             return ConversationHandler.END
         
         context.user_data['set_cover_playlist_id'] = playlist_id
@@ -977,10 +924,7 @@ class CommandHandlers:
         
         playlist_id = context.user_data.get('set_cover_playlist_id')
         if not playlist_id:
-            update.effective_message.reply_text(
-                "❌ Ошибка: плейлист не найден.",
-                reply_markup=get_main_menu_keyboard()
-            )
+            send_message(update, PLAYLIST_NOT_FOUND_ERROR, use_main_menu=True)
             return ConversationHandler.END
         
         # Получаем фото (берем самое большое)
