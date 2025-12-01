@@ -51,10 +51,11 @@
   - Устранить дублирование текстов при использовании `update.callback_query.message.reply_text` и `update.effective_message.reply_text`
   - Создать утилиту для унифицированной отправки сообщений (например, `utils/message_helpers.py`)
   - Вынести общие ответы в константы или утилиту (например, "❌ У вас нет активного плейлиста")
-- [ ] Рефакторинг `button_callback` в `handlers/callbacks.py`
+- [x] Рефакторинг `button_callback` в `handlers/callbacks.py`
   - Метод слишком большой (165+ строк)
   - Вынести каждый `if` блок в отдельный метод для улучшения читаемости и тестируемости
   - Создать методы: `handle_select_playlist`, `handle_delete_playlist`, `handle_edit_playlist`, `handle_toggle_insert_position`
+  - Вынести дублирующийся код создания клавиатуры редактирования в метод `_create_edit_playlist_keyboard`
 
 ### Улучшения UX
 - [x] Добавить установку обложки для плейлиста (через фото)
