@@ -1,7 +1,7 @@
 """
 Модуль для создания клавиатур Telegram бота.
 """
-from telegram import ReplyKeyboardMarkup
+from aiogram.types import ReplyKeyboardMarkup
 
 
 def get_main_menu_keyboard():

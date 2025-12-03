@@ -2,8 +2,9 @@
 Обработчики текстовых сообщений для Telegram бота.
 """
 import logging
-from telegram import Update
-from telegram.ext import CallbackContext
+import asyncio
+from aiogram.types import Message
+from aiogram.fsm.context import FSMContext
 
 from database import DatabaseInterface
 from yandex_client_manager import YandexClientManager
@@ -57,92 +58,94 @@ class MessageHandlers:
             self._command_handlers = CommandHandlers(self.db, self.client_manager, self.context_manager)
         return self._command_handlers
     
-    def handle_menu_buttons(self, update: Update, context: CallbackContext):
+    async def handle_menu_buttons(self, message: Message, state: FSMContext):
         """Обработка нажатий на кнопки меню."""
-        text = update.effective_message.text.strip()
-        telegram_id = update.effective_user.id
-        self.db.ensure_user(telegram_id, update.effective_user.username)
+        text = message.text.strip()
+        telegram_id = message.from_user.id
+        await asyncio.to_thread(self.db.ensure_user, telegram_id, message.from_user.username)
         
         # Проверяем, не находится ли пользователь в состоянии FSM
-        # Если да, то не обрабатываем кнопки меню (кроме "❌ Отмена", которая обрабатывается ConversationHandler)
-        if context.user_data.get('delete_track_playlist_id') is not None:
-            # Пользователь в процессе удаления трека - ConversationHandler должен обработать
+        # Если да, то не обрабатываем кнопки меню (кроме "❌ Отмена", которая обрабатывается FSM fallback)
+        state_data = await state.get_data()
+        if state_data.get('delete_track_playlist_id') is not None:
+            # Пользователь в процессе удаления трека - FSM должен обработать
             return
-        if context.user_data.get('edit_playlist_id') is not None:
-            # Пользователь в процессе редактирования названия - ConversationHandler должен обработать
+        if state_data.get('edit_playlist_id') is not None:
+            # Пользователь в процессе редактирования названия - FSM должен обработать
             return
-        if context.user_data.get('set_cover_playlist_id') is not None:
-            # Пользователь в процессе установки обложки - ConversationHandler должен обработать
+        if state_data.get('set_cover_playlist_id') is not None:
+            # Пользователь в процессе установки обложки - FSM должен обработать
             return
         
         if text == "📁 Мои плейлисты":
-            self.command_handlers.my_playlists(update, context)
+            await self.command_handlers.my_playlists(message)
         elif text == "📂 Общие плейлисты":
-            self.command_handlers.shared_playlists(update, context)
+            await self.command_handlers.shared_playlists(message)
         elif text == "📋 Список треков":
-            self.command_handlers.show_list(update, context)
+            await self.command_handlers.show_list(message)
         elif text == "ℹ️ Информация":
-            self.command_handlers.playlist_info(update, context)
+            await self.command_handlers.playlist_info(message)
         elif text == "🏠 Главное меню":
-            self.command_handlers.main_menu(update, context)
-        # Кнопка "➕ Создать плейлист" обрабатывается ConversationHandler
-        # Кнопка "❌ Отмена" обрабатывается fallback'ами ConversationHandler
+            await self.command_handlers.main_menu(message)
+        # Кнопка "➕ Создать плейлист" обрабатывается FSM
+        # Кнопка "❌ Отмена" обрабатывается fallback'ами FSM
         else:
             # Если это не кнопка меню, пытаемся обработать как ссылку
-            self.add_command(update, context)
+            await self.add_command(message, state)
     
-    def add_command(self, update: Update, context: CallbackContext):
+    async def add_command(self, message: Message, state: FSMContext):
         """Обработка ссылок на треки/альбомы/плейлисты."""
-        telegram_id = update.effective_user.id
-        self.db.ensure_user(telegram_id, update.effective_user.username)
+        telegram_id = message.from_user.id
+        await asyncio.to_thread(self.db.ensure_user, telegram_id, message.from_user.username)
         
         # Проверяем, не находится ли пользователь в состоянии FSM
-        # Если да, то не обрабатываем сообщение здесь (ConversationHandler должен обработать)
-        if context.user_data.get('delete_track_playlist_id') is not None:
+        # Если да, то не обрабатываем сообщение здесь (FSM должен обработать)
+        state_data = await state.get_data()
+        if state_data.get('delete_track_playlist_id') is not None:
             # Пользователь в процессе удаления трека - не обрабатываем
             return
-        if context.user_data.get('edit_playlist_id') is not None:
+        if state_data.get('edit_playlist_id') is not None:
             # Пользователь в процессе редактирования названия - не обрабатываем
             return
-        if context.user_data.get('set_cover_playlist_id') is not None:
+        if state_data.get('set_cover_playlist_id') is not None:
             # Пользователь в процессе установки обложки - не обрабатываем
             return
         
-        text = (update.effective_message.text or "").strip()
+        text = (message.text or "").strip()
         
         # Получаем активный плейлист
-        playlist_id = self.context_manager.get_active_playlist_id(telegram_id)
+        playlist_id = await self.context_manager.get_active_playlist_id(telegram_id)
         
         if not playlist_id:
-            send_message(update, NO_ACTIVE_PLAYLIST, use_main_menu=True)
+            await send_message(message, NO_ACTIVE_PLAYLIST, use_main_menu=True)
             return
         
         # Проверяем доступ
-        if not self.db.check_playlist_access(playlist_id, telegram_id, need_add=True):
-            playlist = self.db.get_playlist(playlist_id)
+        if not await asyncio.to_thread(self.db.check_playlist_access, playlist_id, telegram_id, need_add=True):
+            playlist = await asyncio.to_thread(self.db.get_playlist, playlist_id)
             title = playlist.get("title") or "плейлист" if playlist else "плейлист"
-            send_message(
-                update,
+            await send_message(
+                message,
                 NO_ADD_PERMISSION.format(title=title),
                 use_main_menu=True
             )
             return
         
         # Показываем информацию об активном плейлисте
-        playlist = self.db.get_playlist(playlist_id)
+        playlist = await asyncio.to_thread(self.db.get_playlist, playlist_id)
         playlist_title = playlist.get("title") or "плейлист" if playlist else "плейлист"
         
-        client = self.client_manager.get_client(telegram_id)
+        client = await self.client_manager.get_client(telegram_id)
         yandex_service = YandexService(client)
         
         # Трек
         tr = parse_track_link(text)
         if tr:
             try:
-                send_message(update, LOADING_TRACK)
+                await send_message(message, LOADING_TRACK)
                 track_obj = yandex_service.get_track(tr)
                 if not track_obj:
-                    update.effective_message.reply_text(
+                    await message.answer(
                         f"❌ Не удалось получить трек.\n\n"
                         f"💡 Проверьте правильность ссылки."
                     )
@@ -150,31 +153,31 @@ class MessageHandlers:
                 
                 album_obj = track_obj.albums[0] if track_obj.albums else None
                 if not album_obj:
-                    update.effective_message.reply_text(
+                    await message.answer(
                         f"❌ Не удалось получить альбом для трека.\n\n"
                         f"💡 Проверьте правильность ссылки."
                     )
                     return
                 
-                ok, err = self.playlist_service.add_track(playlist_id, track_obj.id, album_obj.id, telegram_id)
+                ok, err = await self.playlist_service.add_track(playlist_id, track_obj.id, album_obj.id, telegram_id)
                 if ok:
                     track_display = yandex_service.format_track(track_obj)
                     # Получаем информацию о том, куда был добавлен трек
                     playlist = self.db.get_playlist(playlist_id)
                     insert_position = playlist.get("insert_position", "end") if playlist else "end"
                     position_text = "в начало" if insert_position == "start" else "в конец"
-                    update.effective_message.reply_text(
+                    await message.answer(
                         f"✅ Трек добавлен {position_text} плейлиста «{playlist_title}»:\n"
                         f"🎵 «{track_display}»"
                     )
                 else:
-                    update.effective_message.reply_text(
+                    await message.answer(
                         f"❌ Не удалось добавить трек: {err}\n\n"
                         f"💡 Проверьте права доступа к плейлисту."
                     )
             except Exception as e:
                 logger.exception(f"Error in add track: {e}")
-                update.effective_message.reply_text(
+                await message.answer(
                     f"❌ Ошибка при добавлении трека: {str(e)}\n\n"
                     f"💡 Проверьте правильность ссылки и попробуйте еще раз."
                 )
@@ -183,10 +186,10 @@ class MessageHandlers:
         # Плейлист
         owner, pid = parse_playlist_link(text)
         if pid:
-            send_message(update, LOADING_PLAYLIST)
+            await send_message(message, LOADING_PLAYLIST)
             pl_obj, err = yandex_service.get_playlist(pid, owner)
             if pl_obj is None:
-                update.effective_message.reply_text(
+                await message.answer(
                     f"❌ Не удалось получить плейлист: {err}\n\n"
                     f"💡 Проверьте правильность ссылки."
                 )
@@ -204,11 +207,11 @@ class MessageHandlers:
                     added += 1
             
             if added > 0:
-                update.effective_message.reply_text(
+                await message.answer(
                     f"✅ Добавлено {added} из {total} треков в «{playlist_title}»."
                 )
             else:
-                update.effective_message.reply_text(
+                await message.answer(
                     f"⚠️ Не удалось добавить треки из плейлиста.\n\n"
                     f"💡 Возможно, все треки уже есть в плейлисте или возникла ошибка."
                 )
@@ -217,10 +220,10 @@ class MessageHandlers:
         # Альбом
         alb_id = parse_album_link(text)
         if alb_id:
-            send_message(update, LOADING_ALBUM)
+            await send_message(message, LOADING_ALBUM)
             tracks = yandex_service.get_album_tracks(alb_id)
             if not tracks:
-                update.effective_message.reply_text(
+                await message.answer(
                     "❌ Не удалось получить альбом или треки.\n\n"
                     "💡 Проверьте правильность ссылки."
                 )
@@ -237,11 +240,11 @@ class MessageHandlers:
                     added += 1
             
             if added > 0:
-                update.effective_message.reply_text(
+                await message.answer(
                     f"✅ Добавлено {added} из {total} треков из альбома в «{playlist_title}»."
                 )
             else:
-                update.effective_message.reply_text(
+                await message.answer(
                     f"⚠️ Не удалось добавить треки из альбома.\n\n"
                     f"💡 Возможно, все треки уже есть в плейлисте или возникла ошибка."
                 )
@@ -250,20 +253,20 @@ class MessageHandlers:
         # Ссылка на шаринг плейлиста
         share_token = parse_share_link(text)
         if share_token:
-            playlist = self.db.get_playlist_by_share_token(share_token)
+            playlist = await asyncio.to_thread(self.db.get_playlist_by_share_token, share_token)
             if playlist:
-                self.db.grant_playlist_access(playlist["id"], telegram_id, can_add=True)
+                await asyncio.to_thread(self.db.grant_playlist_access, playlist["id"], telegram_id, can_add=True)
                 # Устанавливаем как активный
                 self.context_manager.set_active_playlist(telegram_id, playlist["id"])
-                update.effective_message.reply_text(
+                await message.answer(
                     f"✅ Вы получили доступ к плейлисту «{playlist.get('title', 'Без названия')}»!\n\n"
                     f"Теперь вы можете добавлять треки в этот плейлист.",
                     reply_markup=get_main_menu_keyboard()
                 )
-                self.db.log_action(telegram_id, "playlist_shared_access", playlist["id"], f"via_token={share_token}")
+                await asyncio.to_thread(self.db.log_action, telegram_id, "playlist_shared_access", playlist["id"], f"via_token={share_token}")
                 return
         
-        update.effective_message.reply_text(
+        await message.answer(
             "❌ Не удалось распознать ссылку.\n\n"
             "📋 Поддерживаемые форматы:\n"
             "• Трек: music.yandex.ru/track/...\n"

@@ -3,7 +3,7 @@
 Поддерживает дефолтный клиент и клиенты пользователей.
 """
 import logging
-import time
+import asyncio
 from typing import Optional, Dict
 from yandex_music import Client
 from yandex_music.exceptions import YandexMusicError, TimedOutError
@@ -31,15 +31,8 @@ class YandexClientManager:
         # Сохраняем дефолтный токен в БД
         self.db.set_default_yandex_account(default_token)
         
-        # Пытаемся инициализировать дефолтный клиент, но не падаем при ошибке
-        # Клиент будет инициализирован лениво при первом использовании
-        try:
-            self._init_default_client()
-        except Exception as e:
-            logger.warning(
-                f"Не удалось инициализировать дефолтный клиент при старте: {e}. "
-                f"Клиент будет инициализирован при первом использовании."
-            )
+        # Дефолтный клиент будет инициализирован лениво при первом использовании
+        # (асинхронно, чтобы не блокировать запуск)
     
     def _create_client_with_timeout(self, token: str) -> Client:
         """Создать клиент с настройками таймаута."""
@@ -60,8 +53,9 @@ class YandexClientManager:
                 logger.debug(f"Параметр timeout не поддерживается, используем дефолтные настройки")
                 return Client(token)
     
-    def _init_client_with_retry(self, token: str, max_retries: int = MAX_RETRIES) -> Client:
-        """Инициализировать клиент с повторными попытками."""
+    def _init_client_with_retry_sync(self, token: str, max_retries: int = MAX_RETRIES) -> Client:
+        """Синхронная версия инициализации клиента с повторными попытками."""
+        import time
         last_error = None
         
         for attempt in range(max_retries):
@@ -88,13 +82,17 @@ class YandexClientManager:
         # Если все попытки не удались
         raise last_error or Exception("Неизвестная ошибка инициализации клиента")
     
-    def _init_default_client(self):
+    async def _init_client_with_retry(self, token: str, max_retries: int = MAX_RETRIES) -> Client:
+        """Асинхронная версия инициализации клиента с повторными попытками."""
+        return await asyncio.to_thread(self._init_client_with_retry_sync, token, max_retries)
+    
+    async def _init_default_client(self):
         """Инициализировать дефолтный клиент."""
         if self._default_client_initialized and self._default_client is not None:
             return
         
         try:
-            self._default_client = self._init_client_with_retry(self.default_token)
+            self._default_client = await self._init_client_with_retry(self.default_token)
             self._default_client_initialized = True
             logger.info("Дефолтный клиент Яндекс.Музыки инициализирован")
         except Exception as e:
@@ -102,11 +100,11 @@ class YandexClientManager:
             self._default_client_initialized = False
             raise
     
-    def _ensure_default_client(self):
+    async def _ensure_default_client(self):
         """Убедиться, что дефолтный клиент инициализирован."""
         if not self._default_client_initialized or self._default_client is None:
             try:
-                self._init_default_client()
+                await self._init_default_client()
             except Exception as e:
                 logger.error(f"Не удалось инициализировать дефолтный клиент: {e}")
                 raise RuntimeError(
@@ -114,19 +112,19 @@ class YandexClientManager:
                     "Проверьте токен и сетевое подключение."
                 )
     
-    def get_client(self, telegram_id: Optional[int] = None) -> Client:
+    async def get_client(self, telegram_id: Optional[int] = None) -> Client:
         """
         Получить клиент Яндекс.Музыки для пользователя.
         Если telegram_id не указан или у пользователя нет своего токена, возвращает дефолтный.
         """
         if telegram_id is None:
-            self._ensure_default_client()
+            await self._ensure_default_client()
             return self._default_client
         
         # Проверяем, есть ли у пользователя свой токен
-        user_token = self.db.get_user_yandex_token(telegram_id)
+        user_token = await asyncio.to_thread(self.db.get_user_yandex_token, telegram_id)
         if not user_token:
-            self._ensure_default_client()
+            await self._ensure_default_client()
             return self._default_client
         
         # Если клиент уже создан, возвращаем его
@@ -135,26 +133,26 @@ class YandexClientManager:
         
         # Создаем новый клиент для пользователя
         try:
-            client = self._init_client_with_retry(user_token)
+            client = await self._init_client_with_retry(user_token)
             self._user_clients[telegram_id] = client
             logger.info(f"Клиент Яндекс.Музыки для пользователя {telegram_id} инициализирован")
             return client
         except Exception as e:
             logger.error(f"Ошибка инициализации клиента для пользователя {telegram_id}: {e}")
             # В случае ошибки возвращаем дефолтный клиент
-            self._ensure_default_client()
+            await self._ensure_default_client()
             return self._default_client
     
-    def set_user_token(self, telegram_id: int, token: str) -> bool:
+    async def set_user_token(self, telegram_id: int, token: str) -> bool:
         """
         Установить токен Яндекс.Музыки для пользователя.
         Возвращает True, если токен валидный и установлен.
         """
         try:
             # Проверяем валидность токена, создавая временный клиент
-            test_client = self._init_client_with_retry(token)
+            test_client = await self._init_client_with_retry(token)
             # Если успешно, сохраняем токен
-            self.db.set_user_yandex_token(telegram_id, token)
+            await asyncio.to_thread(self.db.set_user_yandex_token, telegram_id, token)
             # Обновляем кэш клиентов
             if telegram_id in self._user_clients:
                 del self._user_clients[telegram_id]
@@ -166,79 +164,81 @@ class YandexClientManager:
             logger.error(f"Ошибка при установке токена для пользователя {telegram_id}: {e}")
             return False
     
-    def get_client_for_playlist(self, playlist_id: int) -> Client:
+    async def get_client_for_playlist(self, playlist_id: int) -> Client:
         """
         Получить клиент для работы с конкретным плейлистом.
         Определяет, какой аккаунт использовался при создании плейлиста.
         """
-        playlist = self.db.get_playlist(playlist_id)
+        playlist = await asyncio.to_thread(self.db.get_playlist, playlist_id)
         if not playlist:
-            self._ensure_default_client()
+            await self._ensure_default_client()
             return self._default_client
         
         yandex_account_id = playlist.get("yandex_account_id")
         if not yandex_account_id:
-            self._ensure_default_client()
+            await self._ensure_default_client()
             return self._default_client
         
         # Получаем аккаунт из БД по ID
-        account = self.db.get_yandex_account_by_id(yandex_account_id)
+        account = await asyncio.to_thread(self.db.get_yandex_account_by_id, yandex_account_id)
         if not account:
-            self._ensure_default_client()
+            await self._ensure_default_client()
             return self._default_client
         
         # Если аккаунт привязан к пользователю, используем его клиент
         telegram_id = account.get("telegram_id")
         if telegram_id:
-            return self.get_client(telegram_id)
+            return await self.get_client(telegram_id)
         
         # Если это дефолтный аккаунт (telegram_id is None), используем дефолтный клиент
-        self._ensure_default_client()
+        await self._ensure_default_client()
         return self._default_client
     
-    def create_playlist(self, telegram_id: Optional[int], title: str) -> Optional[Dict]:
+    async def create_playlist(self, telegram_id: Optional[int], title: str) -> Optional[Dict]:
         """
         Создать новый плейлист в Яндекс.Музыке.
         Возвращает информацию о созданном плейлисте или None при ошибке.
         """
-        client = self.get_client(telegram_id)
+        client = await self.get_client(telegram_id)
         
         try:
-            # Получаем UID аккаунта
-            if not hasattr(client, "me") or not client.me:
-                try:
-                    client.init()
-                except Exception as e:
-                    logger.error(f"Ошибка при повторной инициализации клиента: {e}")
-                    # Пытаемся пересоздать клиент
-                    if telegram_id:
-                        if telegram_id in self._user_clients:
-                            del self._user_clients[telegram_id]
-                        client = self.get_client(telegram_id)
-                    else:
-                        self._default_client_initialized = False
-                        self._default_client = None
-                        self._init_default_client()
-                        client = self._default_client
+            # Получаем UID аккаунта (синхронный вызов оборачиваем в thread)
+            def _get_uid_and_create_playlist(client, title):
+                # Получаем UID аккаунта
+                if not hasattr(client, "me") or not client.me:
+                    try:
+                        client.init()
+                    except Exception as e:
+                        logger.error(f"Ошибка при повторной инициализации клиента: {e}")
+                        raise
+                
+                uid = str(client.me.account.uid)
+                
+                # Создаем плейлист
+                playlist = client.users_playlists_create(title)
+                if not playlist:
+                    logger.error("Не удалось создать плейлист")
+                    return None, None
+                
+                playlist_kind = str(playlist.kind)
+                return uid, playlist_kind
             
-            uid = str(client.me.account.uid)
-            
-            # Создаем плейлист
-            playlist = client.users_playlists_create(title)
-            if not playlist:
-                logger.error("Не удалось создать плейлист")
+            uid, playlist_kind = await asyncio.to_thread(_get_uid_and_create_playlist, client, title)
+            if uid is None:
                 return None
             
-            playlist_kind = str(playlist.kind)
-            
             # Получаем аккаунт из БД для связи
-            yandex_account = self.db.get_yandex_account_for_user(telegram_id) if telegram_id else self.db.get_default_yandex_account()
+            if telegram_id:
+                yandex_account = await asyncio.to_thread(self.db.get_yandex_account_for_user, telegram_id)
+            else:
+                yandex_account = await asyncio.to_thread(self.db.get_default_yandex_account)
             yandex_account_id = yandex_account["id"] if yandex_account else None
             
             # Сохраняем в БД
             # Для дефолтного аккаунта используем специальный telegram_id = 0
             creator_id = telegram_id if telegram_id else 0
-            playlist_id = self.db.create_playlist(
+            playlist_id = await asyncio.to_thread(
+                self.db.create_playlist,
                 playlist_kind=playlist_kind,
                 owner_id=uid,
                 creator_telegram_id=creator_id,
@@ -251,12 +251,14 @@ class YandexClientManager:
             share_token = secrets.token_urlsafe(16)
             
             # Обновляем share_token и title через интерфейс
-            self.db.update_playlist(playlist_id, title=title, share_token=share_token)
+            await asyncio.to_thread(self.db.update_playlist, playlist_id, title=title, share_token=share_token)
             
             # Логируем действие
             if telegram_id:
-                self.db.log_action(telegram_id, "playlist_created", playlist_id, 
-                                 f"title={title}, kind={playlist_kind}")
+                await asyncio.to_thread(
+                    self.db.log_action, telegram_id, "playlist_created", playlist_id, 
+                    f"title={title}, kind={playlist_kind}"
+                )
             
             return {
                 "id": playlist_id,

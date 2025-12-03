@@ -4,22 +4,30 @@ Telegram бот для управления плейлистами Яндекс.
 """
 import os
 import logging
+import asyncio
 import signal
 import sys
 from dotenv import load_dotenv
 
-from telegram.ext import (
-    Updater, CommandHandler, MessageHandler, Filters, CallbackContext,
-    CallbackQueryHandler, ConversationHandler, PreCheckoutQueryHandler
-)
+from aiogram import Bot, Dispatcher, F
+from aiogram.filters import Command, CommandStart
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram.types import Message, CallbackQuery, PreCheckoutQuery, SuccessfulPayment
 
 from database import create_database
 from yandex_client_manager import YandexClientManager
 from utils.context import UserContextManager
-from handlers.commands import CommandHandlers, WAITING_PLAYLIST_NAME, WAITING_TOKEN, WAITING_EDIT_NAME, WAITING_TRACK_NUMBER, WAITING_PLAYLIST_COVER
+from handlers.commands import CommandHandlers
 from handlers.callbacks import CallbackHandlers
 from handlers.messages import MessageHandlers
-from handlers.keyboards import get_main_menu_keyboard, get_cancel_keyboard
+from handlers.states import (
+    CreatePlaylistStates,
+    SetTokenStates,
+    EditNameStates,
+    DeleteTrackStates,
+    SetCoverStates
+)
 
 # Загружаем переменные окружения
 load_dotenv()
@@ -47,10 +55,10 @@ logger = logging.getLogger(__name__)
 
 # Подавляем некритичные предупреждения (только если не DEBUG)
 if log_level > logging.DEBUG:
-    logging.getLogger('telegram.utils.request').setLevel(logging.ERROR)
+    logging.getLogger('aiogram').setLevel(logging.ERROR)
     logging.getLogger('apscheduler').setLevel(logging.ERROR)
 
-# === Инициализация БД и менеджера клиентов ===
+# === Инициализация БД и менеджеров ===
 # Создаем БД на основе DB_TYPE из переменных окружения (по умолчанию: sqlite)
 db = create_database()
 client_manager = YandexClientManager(YANDEX_TOKEN, db)
@@ -61,33 +69,35 @@ command_handlers = CommandHandlers(db, client_manager, context_manager)
 callback_handlers = CallbackHandlers(db, context_manager)
 message_handlers = MessageHandlers(db, client_manager, context_manager)
 
-# Глобальная переменная для хранения updater (нужна для обработки сигналов)
-_updater_instance = None
+# Глобальные переменные для корректного завершения
+bot_instance: Bot = None
+dp_instance: Dispatcher = None
 
 
-def error_handler(update: object, context: CallbackContext):
+async def error_handler(event, exception):
     """Обработчик ошибок."""
-    logger.error(f"Ошибка при обработке обновления: {context.error}")
-    if update and hasattr(update, 'effective_message'):
-        try:
-            from utils.message_helpers import send_message, GENERAL_ERROR
-            send_message(update, GENERAL_ERROR, use_main_menu=True)
-        except:
-            pass
+    logger.error(f"Ошибка при обработке обновления: {exception}", exc_info=exception)
+    try:
+        from utils.message_helpers import send_message, GENERAL_ERROR
+        # Если это сообщение, пытаемся отправить ошибку
+        if isinstance(event, Message):
+            await send_message(event, GENERAL_ERROR, use_main_menu=True)
+    except Exception as e:
+        logger.error(f"Ошибка при отправке сообщения об ошибке: {e}")
 
 
 def signal_handler(signum, frame):
     """Обработчик сигналов для корректного завершения."""
     logger.info(f"Получен сигнал {signum}, завершаю работу бота...")
-    if _updater_instance:
-        _updater_instance.stop()
-        _updater_instance.is_idle = False
+    if bot_instance and dp_instance:
+        # Останавливаем polling
+        asyncio.create_task(dp_instance.stop_polling())
     sys.exit(0)
 
 
-def main():
+async def main():
     """Главная функция."""
-    global _updater_instance
+    global bot_instance, dp_instance
     
     try:
         # Регистрируем обработчики сигналов для корректного завершения в Docker
@@ -97,178 +107,189 @@ def main():
         logger.info("Запуск бота...")
         logger.info(f"TELEGRAM_TOKEN установлен: {'Да' if TELEGRAM_TOKEN else 'Нет'}")
         
-        _updater_instance = Updater(TELEGRAM_TOKEN, use_context=True)
-        updater = _updater_instance
-        dp = updater.dispatcher
+        # Создаем Bot и Dispatcher
+        bot_instance = Bot(token=TELEGRAM_TOKEN)
+        Bot.set_current(bot_instance)  # Устанавливаем текущий bot для использования в обработчиках
+        storage = MemoryStorage()
+        dp_instance = Dispatcher(storage=storage)
         
-        dp.add_error_handler(error_handler)
+        # Регистрируем обработчик ошибок
+        dp_instance.errors.register(error_handler)
         
-        # FSM для создания плейлиста
-        create_playlist_conv = ConversationHandler(
-            entry_points=[
-                CommandHandler("create_playlist", command_handlers.create_playlist_start),
-                MessageHandler(Filters.regex("^➕ Создать плейлист$"), command_handlers.create_playlist_start)
-            ],
-            states={
-                WAITING_PLAYLIST_NAME: [
-                    MessageHandler(Filters.text & ~Filters.command & ~Filters.regex("^(❌ Отмена|отмена|🏠 Главное меню)$"), command_handlers.create_playlist_name)
-                ],
-            },
-            fallbacks=[
-                CommandHandler("cancel", command_handlers.cancel_operation),
-                CommandHandler("start", command_handlers.cancel_operation),
-                MessageHandler(Filters.regex("^(❌ Отмена|отмена|🏠 Главное меню)$"), command_handlers.cancel_operation)
-            ],
-            name="create_playlist",
-            persistent=False
+        # === Регистрация обработчиков команд ===
+        
+        # Команда /start (обрабатывает и с аргументами, и без)
+        dp_instance.message.register(
+            command_handlers.start_handler,
+            CommandStart()
         )
         
-        # FSM для установки токена
-        set_token_conv = ConversationHandler(
-            entry_points=[
-                CommandHandler("set_token", command_handlers.set_token_start)
-            ],
-            states={
-                WAITING_TOKEN: [
-                    MessageHandler(Filters.text & ~Filters.command & ~Filters.regex("^(❌ Отмена|отмена|🏠 Главное меню)$"), command_handlers.set_token_input)
-                ],
-            },
-            fallbacks=[
-                CommandHandler("cancel", command_handlers.cancel_operation),
-                CommandHandler("start", command_handlers.cancel_operation),
-                MessageHandler(Filters.regex("^(❌ Отмена|отмена|🏠 Главное меню)$"), command_handlers.cancel_operation)
-            ],
-            name="set_token",
-            persistent=False
+        # Команда /main_menu
+        dp_instance.message.register(
+            command_handlers.main_menu,
+            Command("main_menu")
         )
         
-        # Команды
-        dp.add_handler(CommandHandler("start", command_handlers.start, pass_args=True))
-        dp.add_handler(create_playlist_conv)
-        dp.add_handler(set_token_conv)
-        dp.add_handler(CommandHandler("my_playlists", command_handlers.my_playlists))
-        dp.add_handler(CommandHandler("shared_playlists", command_handlers.shared_playlists))
-        dp.add_handler(CommandHandler("playlist_info", command_handlers.playlist_info))
-        dp.add_handler(CommandHandler("list", command_handlers.show_list))
-        
-        # FSM для редактирования названия
-        edit_name_conv = ConversationHandler(
-            entry_points=[
-                CommandHandler("edit_name", command_handlers.edit_name_start),
-                CallbackQueryHandler(command_handlers.edit_name_start, pattern="^edit_name_")
-            ],
-            states={
-                WAITING_EDIT_NAME: [
-                    MessageHandler(Filters.text & ~Filters.command & ~Filters.regex("^(❌ Отмена|отмена|🏠 Главное меню)$"), command_handlers.edit_name_input)
-                ],
-            },
-            fallbacks=[
-                CommandHandler("cancel", command_handlers.cancel_operation),
-                CommandHandler("start", command_handlers.cancel_operation),
-                MessageHandler(Filters.regex("^(❌ Отмена|отмена|🏠 Главное меню)$"), command_handlers.cancel_operation)
-            ],
-            name="edit_name",
-            persistent=False
+        # Команда /my_playlists
+        dp_instance.message.register(
+            command_handlers.my_playlists,
+            Command("my_playlists")
         )
         
-        dp.add_handler(edit_name_conv)
-        dp.add_handler(CommandHandler("delete_playlist", command_handlers.delete_playlist_cmd))
-        
-        # FSM для удаления трека
-        delete_track_conv = ConversationHandler(
-            entry_points=[
-                CommandHandler("delete_track", command_handlers.delete_track_start),
-                CallbackQueryHandler(command_handlers.delete_track_start, pattern="^delete_track_")
-            ],
-            states={
-                WAITING_TRACK_NUMBER: [
-                    # Перехватываем ВСЕ текстовые сообщения (включая просто цифры)
-                    # Но исключаем кнопку "Отмена", которая обрабатывается fallback
-                    MessageHandler(Filters.text & ~Filters.command & ~Filters.regex("^(❌ Отмена|отмена|🏠 Главное меню)$"), command_handlers.delete_track_input)
-                ],
-            },
-            fallbacks=[
-                CommandHandler("cancel", command_handlers.cancel_operation),
-                CommandHandler("start", command_handlers.cancel_operation),
-                MessageHandler(Filters.regex("^(❌ Отмена|отмена|🏠 Главное меню)$"), command_handlers.cancel_operation)
-            ],
-            name="delete_track",
-            persistent=False
+        # Команда /shared_playlists
+        dp_instance.message.register(
+            command_handlers.shared_playlists,
+            Command("shared_playlists")
         )
         
-        dp.add_handler(delete_track_conv)
-        
-        # FSM для установки обложки
-        set_cover_conv = ConversationHandler(
-            entry_points=[
-                CallbackQueryHandler(command_handlers.set_cover_start, pattern="^set_cover_")
-            ],
-            states={
-                WAITING_PLAYLIST_COVER: [
-                    MessageHandler(Filters.photo, command_handlers.set_cover_input)
-                ],
-            },
-            fallbacks=[
-                CommandHandler("cancel", command_handlers.cancel_operation),
-                CommandHandler("start", command_handlers.cancel_operation),
-                MessageHandler(Filters.regex("^(❌ Отмена|отмена|🏠 Главное меню)$"), command_handlers.cancel_operation)
-            ],
-            name="set_cover",
-            persistent=False
+        # Команда /playlist_info
+        dp_instance.message.register(
+            command_handlers.playlist_info,
+            Command("playlist_info")
         )
         
-        dp.add_handler(set_cover_conv)
+        # Команда /list
+        dp_instance.message.register(
+            command_handlers.show_list,
+            Command("list")
+        )
         
-        # Обработчики платежей
-        dp.add_handler(PreCheckoutQueryHandler(command_handlers.handle_pre_checkout_query))
-        dp.add_handler(MessageHandler(Filters.successful_payment, command_handlers.handle_successful_payment))
+        # Команда /delete_playlist
+        dp_instance.message.register(
+            command_handlers.delete_playlist_cmd,
+            Command("delete_playlist")
+        )
         
-        # Команда покупки лимита
-        dp.add_handler(CommandHandler("buy_limit", command_handlers.buy_limit))
+        # Команда /buy_limit
+        dp_instance.message.register(
+            command_handlers.buy_limit,
+            Command("buy_limit")
+        )
         
-        # Inline-кнопки
-        dp.add_handler(CallbackQueryHandler(callback_handlers.button_callback))
+        # Команда /cancel
+        dp_instance.message.register(
+            command_handlers.cancel_operation,
+            Command("cancel")
+        )
         
-        # Обработка кнопок меню и текстовых сообщений
-        # Кнопки меню (кроме тех, что обрабатываются ConversationHandler)
-        # ВАЖНО: "❌ Отмена" НЕ должна быть в этом списке, она обрабатывается ConversationHandler
+        # === FSM для создания плейлиста ===
+        dp_instance.message.register(
+            command_handlers.create_playlist_start,
+            Command("create_playlist")
+        )
+        dp_instance.message.register(
+            command_handlers.create_playlist_start,
+            F.text == "➕ Создать плейлист"
+        )
+        dp_instance.message.register(
+            command_handlers.create_playlist_name,
+            CreatePlaylistStates.waiting_playlist_name
+        )
+        
+        # === FSM для установки токена ===
+        dp_instance.message.register(
+            command_handlers.set_token_start,
+            Command("set_token")
+        )
+        dp_instance.message.register(
+            command_handlers.set_token_input,
+            SetTokenStates.waiting_token
+        )
+        
+        # === FSM для редактирования названия ===
+        dp_instance.message.register(
+            command_handlers.edit_name_start,
+            Command("edit_name")
+        )
+        dp_instance.callback_query.register(
+            command_handlers.edit_name_start,
+            F.data.startswith("edit_name_")
+        )
+        dp_instance.message.register(
+            command_handlers.edit_name_input,
+            EditNameStates.waiting_edit_name
+        )
+        
+        # === FSM для удаления трека ===
+        dp_instance.message.register(
+            command_handlers.delete_track_start,
+            Command("delete_track")
+        )
+        dp_instance.callback_query.register(
+            command_handlers.delete_track_start,
+            F.data.startswith("delete_track_")
+        )
+        dp_instance.message.register(
+            command_handlers.delete_track_input,
+            DeleteTrackStates.waiting_track_number
+        )
+        
+        # === FSM для установки обложки ===
+        dp_instance.callback_query.register(
+            command_handlers.set_cover_start,
+            F.data.startswith("set_cover_")
+        )
+        dp_instance.message.register(
+            command_handlers.set_cover_input,
+            SetCoverStates.waiting_playlist_cover,
+            F.photo
+        )
+        
+        # === Обработчики платежей ===
+        dp_instance.pre_checkout_query.register(
+            command_handlers.handle_pre_checkout_query
+        )
+        dp_instance.message.register(
+            command_handlers.handle_successful_payment,
+            F.successful_payment
+        )
+        
+        # === Inline-кнопки ===
+        dp_instance.callback_query.register(
+            callback_handlers.button_callback
+        )
+        
+        # === Обработка кнопок меню и текстовых сообщений ===
         menu_buttons = [
             "📁 Мои плейлисты", "📂 Общие плейлисты",
             "📋 Список треков", "ℹ️ Информация", "🏠 Главное меню"
         ]
-        # Обработка кнопок меню (должна быть перед обработкой ссылок, но после ConversationHandler)
-        # Исключаем "❌ Отмена" из обработки, так как она обрабатывается ConversationHandler
-        dp.add_handler(MessageHandler(
-            Filters.text(menu_buttons) & ~Filters.command & ~Filters.regex("^(❌ Отмена|отмена)$"),
-            message_handlers.handle_menu_buttons
-        ))
         
-        # Обработка текстовых сообщений (ссылки) - только если не кнопка меню и не команда
-        # ConversationHandler обрабатывает свои состояния первым, поэтому этот обработчик
-        # сработает только если пользователь НЕ находится в состоянии FSM
-        dp.add_handler(MessageHandler(
-            Filters.text & ~Filters.command,
-            message_handlers.add_command
-        ))
+        # Обработка кнопок меню (должна быть перед обработкой ссылок)
+        dp_instance.message.register(
+            message_handlers.handle_menu_buttons,
+            F.text.in_(menu_buttons)
+        )
+        
+        # Обработка текстовых сообщений (ссылки) - только если не FSM состояние и не кнопка меню
+        # FSM состояния обрабатываются первыми, поэтому этот обработчик сработает только если пользователь НЕ находится в состоянии FSM
+        dp_instance.message.register(
+            message_handlers.add_command,
+            F.text & ~F.text.in_(menu_buttons) & ~Command()
+        )
         
         logger.info("Начинаю polling...")
-        updater.start_polling(
+        await dp_instance.start_polling(
+            bot_instance,
             drop_pending_updates=False,
-            timeout=10,
-            bootstrap_retries=3,
-            read_latency=2
+            allowed_updates=dp_instance.resolve_used_update_types()
         )
         logger.info("Бот запущен и готов к работе!")
-        logger.info(f"Бот @{updater.bot.get_me().username} готов принимать команды")
-        updater.idle()
+        bot_info = await bot_instance.get_me()
+        logger.info(f"Бот @{bot_info.username} готов принимать команды")
+        
     except KeyboardInterrupt:
         logger.info("Получен сигнал прерывания, завершаю работу...")
-        if _updater_instance:
-            _updater_instance.stop()
     except Exception as e:
         logger.exception(f"Критическая ошибка при запуске бота: {e}")
         raise
+    finally:
+        if bot_instance:
+            await bot_instance.session.close()
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        logger.info("Бот остановлен пользователем")

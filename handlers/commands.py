@@ -3,9 +3,11 @@
 """
 import logging
 import os
+import asyncio
 from typing import Optional
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import CallbackContext, ConversationHandler
+from aiogram import Bot
+from aiogram.types import Message, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, PreCheckoutQuery, SuccessfulPayment
+from aiogram.fsm.context import FSMContext
 
 from database import DatabaseInterface
 from yandex_client_manager import YandexClientManager
@@ -26,19 +28,19 @@ from services.playlist_service import PlaylistService
 from services.yandex_service import YandexService
 from services.payment_service import PaymentService
 from .keyboards import get_main_menu_keyboard, get_cancel_keyboard
+from .states import (
+    CreatePlaylistStates,
+    SetTokenStates,
+    EditNameStates,
+    DeleteTrackStates,
+    SetCoverStates
+)
 
 logger = logging.getLogger(__name__)
 
 # Лимит плейлистов на пользователя (можно задать через переменную окружения)
 DEFAULT_PLAYLIST_LIMIT = 2
 PLAYLIST_LIMIT = int(os.getenv("PLAYLIST_LIMIT", DEFAULT_PLAYLIST_LIMIT))
-
-# FSM States
-WAITING_PLAYLIST_NAME = 1
-WAITING_TOKEN = 2
-WAITING_EDIT_NAME = 3
-WAITING_TRACK_NUMBER = 4
-WAITING_PLAYLIST_COVER = 5
 
 
 class CommandHandlers:
@@ -63,32 +65,34 @@ class CommandHandlers:
         self.context_manager = context_manager
         self.playlist_service = PlaylistService(db, client_manager)
     
-    def start(self, update: Update, context: CallbackContext):
-        """Команда /start."""
-        telegram_id = update.effective_user.id
-        username = update.effective_user.username
-        self.db.ensure_user(telegram_id, username)
+    async def start_handler(self, message: Message):
+        """Команда /start (обрабатывает и с аргументами, и без)."""
+        telegram_id = message.from_user.id
+        username = message.from_user.username
+        await asyncio.to_thread(self.db.ensure_user, telegram_id, username)
         
-        # Проверяем, есть ли параметр start (для шаринга плейлистов)
-        if context.args:
-            share_token = context.args[0]
-            playlist = self.db.get_playlist_by_share_token(share_token)
-            if playlist:
-                # Предоставляем доступ к плейлисту
-                self.db.grant_playlist_access(playlist["id"], telegram_id, can_add=True)
-                # Устанавливаем как активный
-                self.context_manager.set_active_playlist(telegram_id, playlist["id"])
-                
-                update.effective_message.reply_text(
-                    f"✅ Вы получили доступ к плейлисту «{playlist.get('title', 'Без названия')}»!\n\n"
-                    f"Теперь вы можете добавлять треки в этот плейлист, отправляя ссылки на треки, альбомы или плейлисты.",
-                    reply_markup=get_main_menu_keyboard()
-                )
-                self.db.log_action(telegram_id, "playlist_shared_access", playlist["id"], f"via_token={share_token}")
-                return
+        # Извлекаем аргументы из команды (для шаринга плейлистов)
+        command_args = message.text.split(maxsplit=1)[1] if len(message.text.split()) > 1 else None
+        if command_args:
+            share_token = command_args.split()[0] if command_args else None
+            if share_token:
+                playlist = await asyncio.to_thread(self.db.get_playlist_by_share_token, share_token)
+                if playlist:
+                    # Предоставляем доступ к плейлисту
+                    await asyncio.to_thread(self.db.grant_playlist_access, playlist["id"], telegram_id, can_add=True)
+                    # Устанавливаем как активный
+                    self.context_manager.set_active_playlist(telegram_id, playlist["id"])
+                    
+                    await message.answer(
+                        f"✅ Вы получили доступ к плейлисту «{playlist.get('title', 'Без названия')}»!\n\n"
+                        f"Теперь вы можете добавлять треки в этот плейлист, отправляя ссылки на треки, альбомы или плейлисты.",
+                        reply_markup=get_main_menu_keyboard()
+                    )
+                    await asyncio.to_thread(self.db.log_action, telegram_id, "playlist_shared_access", playlist["id"], f"via_token={share_token}")
+                    return
         
         # Показываем информацию об активном плейлисте, если есть
-        active_info = self.context_manager.get_active_playlist_info(telegram_id)
+        active_info = await self.context_manager.get_active_playlist_info(telegram_id)
         
         help_text = (
             "Привет! Я бот для управления плейлистами Яндекс.Музыки 🎵\n\n"
@@ -104,18 +108,18 @@ class CommandHandlers:
             "💡 Совет: Сначала создайте плейлист или получите доступ к существующему!"
         )
         
-        update.effective_message.reply_text(
+        await message.answer(
             help_text,
             reply_markup=get_main_menu_keyboard()
         )
-        self.db.log_action(telegram_id, "command_start", None, None)
+        await asyncio.to_thread(self.db.log_action, telegram_id, "command_start", None, None)
     
-    def main_menu(self, update: Update, context: CallbackContext):
+    async def main_menu(self, message: Message):
         """Главное меню."""
-        telegram_id = update.effective_user.id
-        self.db.ensure_user(telegram_id, update.effective_user.username)
+        telegram_id = message.from_user.id
+        await asyncio.to_thread(self.db.ensure_user, telegram_id, message.from_user.username)
         
-        active_info = self.context_manager.get_active_playlist_info(telegram_id)
+        active_info = await self.context_manager.get_active_playlist_info(telegram_id)
         text = "🏠 Главное меню\n\n"
         
         if active_info:
@@ -126,53 +130,54 @@ class CommandHandlers:
         
         text += "Выберите действие из меню ниже:"
         
-        update.effective_message.reply_text(
+        await message.answer(
             text,
             reply_markup=get_main_menu_keyboard()
         )
     
-    def create_playlist_start(self, update: Update, context: CallbackContext) -> int:
+    async def create_playlist_start(self, message: Message, state: FSMContext):
         """Начало создания плейлиста (FSM)."""
-        telegram_id = update.effective_user.id
-        self.db.ensure_user(telegram_id, update.effective_user.username)
+        telegram_id = message.from_user.id
+        await asyncio.to_thread(self.db.ensure_user, telegram_id, message.from_user.username)
         
         # FSM диалог
-        update.effective_message.reply_text(
+        await message.answer(
             "📝 Создание нового плейлиста\n\n"
             "Введите название плейлиста (максимум 100 символов):\n\n"
             "💡 Пример: Моя музыка",
             reply_markup=get_cancel_keyboard()
         )
-        return WAITING_PLAYLIST_NAME
+        await state.set_state(CreatePlaylistStates.waiting_playlist_name)
     
-    def create_playlist_name(self, update: Update, context: CallbackContext) -> int:
+    async def create_playlist_name(self, message: Message, state: FSMContext):
         """Обработка названия плейлиста."""
-        telegram_id = update.effective_user.id
-        title = update.effective_message.text.strip()
+        telegram_id = message.from_user.id
+        title = message.text.strip()
         
         # Проверка на отмену
         if title.lower() in ["отмена", "❌ отмена", "/cancel", "/start"]:
-            return self.cancel_operation(update, context)
+            await self.cancel_operation(message, state)
+            return
         
         # Валидация
         if not title:
-            update.effective_message.reply_text(
+            await message.answer(
                 "❌ Название не может быть пустым. Попробуйте еще раз:",
                 reply_markup=get_cancel_keyboard()
             )
-            return WAITING_PLAYLIST_NAME
+            return
         
         if len(title) > 100:
-            update.effective_message.reply_text(
+            await message.answer(
                 "❌ Название слишком длинное (максимум 100 символов).\n\n"
                 "Введите более короткое название:",
                 reply_markup=get_cancel_keyboard()
             )
-            return WAITING_PLAYLIST_NAME
+            return
         
         # Проверяем лимит плейлистов (с учетом подписки)
-        user_limit = self.db.get_user_playlist_limit(telegram_id)
-        current_count = self.db.count_user_playlists(telegram_id)
+        user_limit = await asyncio.to_thread(self.db.get_user_playlist_limit, telegram_id)
+        current_count = await asyncio.to_thread(self.db.count_user_playlists, telegram_id)
         
         # Проверка лимита
         if user_limit == -1:
@@ -181,33 +186,36 @@ class CommandHandlers:
         elif current_count >= user_limit:
             # Показываем предложение купить расширенный лимит
             limit_text = "безлимитно" if user_limit == -1 else f"{user_limit} плейлистов"
-            update.effective_message.reply_text(
+            await message.answer(
                 f"❌ Достигнут лимит плейлистов!\n\n"
                 f"📊 У вас уже создано {current_count} из {user_limit} плейлистов.\n\n"
                 f"💡 Хотите увеличить лимит? Используйте /buy_limit",
                 reply_markup=get_main_menu_keyboard()
             )
-            return ConversationHandler.END
+            await state.clear()
+            return
         
         # Создаем плейлист
-        send_message(update, CREATING_PLAYLIST)
-        result = self.client_manager.create_playlist(telegram_id, title)
+        await send_message(message, CREATING_PLAYLIST)
+        result = await self.client_manager.create_playlist(telegram_id, title)
         
         if result:
             playlist_id = result["id"]
-            share_link = self.playlist_service.get_share_link(playlist_id, context.bot.username)
+            bot = Bot.get_current()
+            bot_info = await bot.get_me()
+            share_link = await self.playlist_service.get_share_link(playlist_id, bot_info.username)
             
             self.context_manager.set_active_playlist(telegram_id, playlist_id)
             
-            update.effective_message.reply_text(
+            await message.answer(
                 f"✅ Плейлист «{title}» успешно создан!\n\n"
                 f"🔗 Ссылка для шаринга:\n{share_link}\n\n"
                 f"Отправьте эту ссылку другим пользователям, чтобы они могли добавлять треки в ваш плейлист.",
                 reply_markup=get_main_menu_keyboard()
             )
-            self.db.log_action(telegram_id, "playlist_created", playlist_id, f"title={title}")
+            await asyncio.to_thread(self.db.log_action, telegram_id, "playlist_created", playlist_id, f"title={title}")
         else:
-            update.effective_message.reply_text(
+            await message.answer(
                 "❌ Не удалось создать плейлист.\n\n"
                 "Возможные причины:\n"
                 "• Не установлен токен Яндекс.Музыки\n"
@@ -216,23 +224,23 @@ class CommandHandlers:
                 reply_markup=get_main_menu_keyboard()
             )
         
-        return ConversationHandler.END
+        await state.clear()
     
-    def my_playlists(self, update: Update, context: CallbackContext):
+    async def my_playlists(self, message: Message):
         """Команда /my_playlists."""
-        telegram_id = update.effective_user.id
-        self.db.ensure_user(telegram_id, update.effective_user.username)
+        telegram_id = message.from_user.id
+        await asyncio.to_thread(self.db.ensure_user, telegram_id, message.from_user.username)
         
-        playlists = self.db.get_user_playlists(telegram_id, only_created=True)
+        playlists = await asyncio.to_thread(self.db.get_user_playlists, telegram_id, only_created=True)
         
         # Получаем информацию о лимите (с учетом подписки)
         current_count = len(playlists)
-        user_limit = self.db.get_user_playlist_limit(telegram_id)
+        user_limit = await asyncio.to_thread(self.db.get_user_playlist_limit, telegram_id)
         limit_text = "∞" if user_limit == -1 else str(user_limit)
         limit_info = f"📊 {current_count}/{limit_text} плейлистов"
         
         if not playlists:
-            update.effective_message.reply_text(
+            await message.answer(
                 f"📁 У вас пока нет созданных плейлистов.\n\n"
                 f"{limit_info}\n\n"
                 f"💡 Создайте новый плейлист, используя кнопку «➕ Создать плейлист» или команду /create_playlist",
@@ -241,7 +249,7 @@ class CommandHandlers:
             return
         
         # Получаем активный плейлист
-        active_id = self.context_manager.get_active_playlist_id(telegram_id)
+        active_id = await self.context_manager.get_active_playlist_id(telegram_id)
         
         lines = [f"📁 Ваши плейлисты:\n{limit_info}\n"]
         keyboard = []
@@ -251,7 +259,7 @@ class CommandHandlers:
             is_active = "🎵 " if pl['id'] == active_id else ""
             lines.append(f"{i}. {is_active}{title}")
             keyboard.append([InlineKeyboardButton(
-                f"{'✓ ' if pl['id'] == active_id else ''}{i}. {title}",
+                text=f"{'✓ ' if pl['id'] == active_id else ''}{i}. {title}",
                 callback_data=f"select_playlist_{pl['id']}"
             )])
         
@@ -261,21 +269,21 @@ class CommandHandlers:
         if active_id:
             lines.append(f"\nАктивный плейлист отмечен 🎵 ")
         
-        reply_markup = InlineKeyboardMarkup(keyboard) if keyboard else None
-        update.effective_message.reply_text(
+        reply_markup = InlineKeyboardMarkup(inline_keyboard=keyboard) if keyboard else None
+        await message.answer(
             "\n".join(lines),
             reply_markup=reply_markup
         )
     
-    def shared_playlists(self, update: Update, context: CallbackContext):
+    async def shared_playlists(self, message: Message):
         """Команда /shared_playlists."""
-        telegram_id = update.effective_user.id
-        self.db.ensure_user(telegram_id, update.effective_user.username)
+        telegram_id = message.from_user.id
+        await asyncio.to_thread(self.db.ensure_user, telegram_id, message.from_user.username)
         
-        playlists = self.db.get_shared_playlists(telegram_id)
+        playlists = await asyncio.to_thread(self.db.get_shared_playlists, telegram_id)
         
         if not playlists:
-            update.effective_message.reply_text(
+            await message.answer(
                 "📂 У вас пока нет общих плейлистов, куда вы добавляете треки.\n\n"
                 "💡 Попросите у друзей ссылку на их плейлист или создайте свой и поделитесь ссылкой!",
                 reply_markup=get_main_menu_keyboard()
@@ -283,7 +291,7 @@ class CommandHandlers:
             return
         
         # Получаем активный плейлист
-        active_id = self.context_manager.get_active_playlist_id(telegram_id)
+        active_id = await self.context_manager.get_active_playlist_id(telegram_id)
         
         lines = ["📂 Плейлисты, куда вы добавляете:\n"]
         keyboard = []
@@ -293,7 +301,7 @@ class CommandHandlers:
             is_active = "🎵 " if pl['id'] == active_id else ""
             lines.append(f"{i}. {is_active}{title}")
             keyboard.append([InlineKeyboardButton(
-                f"{'✓ ' if pl['id'] == active_id else ''}{i}. {title}",
+                text=f"{'✓ ' if pl['id'] == active_id else ''}{i}. {title}",
                 callback_data=f"select_playlist_{pl['id']}"
             )])
         
@@ -303,46 +311,48 @@ class CommandHandlers:
         if active_id:
             lines.append(f"\n🎵 Активный плейлист отмечен")
         
-        reply_markup = InlineKeyboardMarkup(keyboard) if keyboard else None
-        update.effective_message.reply_text(
+        reply_markup = InlineKeyboardMarkup(inline_keyboard=keyboard) if keyboard else None
+        await message.answer(
             "\n".join(lines),
             reply_markup=reply_markup
         )
     
-    def playlist_info(self, update: Update, context: CallbackContext):
+    async def playlist_info(self, message: Message):
         """Команда /playlist_info."""
-        telegram_id = update.effective_user.id
-        self.db.ensure_user(telegram_id, update.effective_user.username)
+        telegram_id = message.from_user.id
+        await asyncio.to_thread(self.db.ensure_user, telegram_id, message.from_user.username)
         
-        playlist_id = self.context_manager.get_active_playlist_id(telegram_id)
+        playlist_id = await self.context_manager.get_active_playlist_id(telegram_id)
         
         if not playlist_id:
-            send_message(update, NO_ACTIVE_PLAYLIST_SELECT, use_main_menu=True)
+            await send_message(message, NO_ACTIVE_PLAYLIST_SELECT, use_main_menu=True)
             return
         
-        playlist = self.db.get_playlist(playlist_id)
+        playlist = await asyncio.to_thread(self.db.get_playlist, playlist_id)
         if not playlist:
-            send_message(update, PLAYLIST_NOT_FOUND, use_main_menu=True)
+            await send_message(message, PLAYLIST_NOT_FOUND, use_main_menu=True)
             return
         
         # Проверяем доступ
-        if not self.db.check_playlist_access(playlist_id, telegram_id):
-            send_message(update, NO_PLAYLIST_ACCESS, use_main_menu=True)
+        if not await asyncio.to_thread(self.db.check_playlist_access, playlist_id, telegram_id):
+            await send_message(message, NO_PLAYLIST_ACCESS, use_main_menu=True)
             return
         
         # Синхронизируем данные плейлиста из API (обновляем название и обложку)
-        sync_ok, sync_error = self.playlist_service.sync_playlist_from_api(playlist_id, telegram_id)
+        sync_ok, sync_error = await self.playlist_service.sync_playlist_from_api(playlist_id, telegram_id)
         if sync_ok:
             # Обновляем объект плейлиста из БД после синхронизации
-            playlist = self.db.get_playlist(playlist_id)
+            playlist = await asyncio.to_thread(self.db.get_playlist, playlist_id)
         
         title = playlist.get("title") or "Без названия"
-        is_creator = self.db.is_playlist_creator(playlist_id, telegram_id)
-        share_link = self.playlist_service.get_share_link(playlist_id, context.bot.username)
-        yandex_link = self.playlist_service.get_yandex_link(playlist_id)
+        is_creator = await asyncio.to_thread(self.db.is_playlist_creator, playlist_id, telegram_id)
+        bot = Bot.get_current()
+        bot_info = await bot.get_me()
+        share_link = await self.playlist_service.get_share_link(playlist_id, bot_info.username)
+        yandex_link = await self.playlist_service.get_yandex_link(playlist_id)
         
         # Получаем информацию о количестве треков
-        tracks_count = self.playlist_service.get_playlist_tracks_count(playlist_id, telegram_id)
+        tracks_count = await self.playlist_service.get_playlist_tracks_count(playlist_id, telegram_id)
         tracks_count_display = tracks_count if tracks_count is not None else 0
         
         # Получаем информацию о том, куда добавляются треки
@@ -369,44 +379,44 @@ class CommandHandlers:
         
         # Кнопка "Редактировать" для создателя
         if is_creator:
-            keyboard.append([InlineKeyboardButton("✏️ Редактировать", callback_data=f"edit_playlist_{playlist_id}")])
+            keyboard.append([InlineKeyboardButton(text="✏️ Редактировать", callback_data=f"edit_playlist_{playlist_id}")])
         
         # Кнопка удаления трека (для всех, кто имеет права редактирования, и если есть треки)
-        can_edit = self.db.check_playlist_access(playlist_id, telegram_id, need_edit=True)
+        can_edit = await asyncio.to_thread(self.db.check_playlist_access, playlist_id, telegram_id, need_edit=True)
         if can_edit and tracks_count is not None and tracks_count > 0:
-            keyboard.append([InlineKeyboardButton("🗑️ Удалить трек", callback_data=f"delete_track_{playlist_id}")])
+            keyboard.append([InlineKeyboardButton(text="🗑️ Удалить трек", callback_data=f"delete_track_{playlist_id}")])
         
-        reply_markup = InlineKeyboardMarkup(keyboard) if keyboard else None
+        reply_markup = InlineKeyboardMarkup(inline_keyboard=keyboard) if keyboard else None
         
-        update.effective_message.reply_text(
+        await message.answer(
             "\n".join(lines),
             reply_markup=reply_markup
         )
     
-    def show_list(self, update: Update, context: CallbackContext):
+    async def show_list(self, message: Message):
         """Команда /list."""
-        telegram_id = update.effective_user.id
-        self.db.ensure_user(telegram_id, update.effective_user.username)
+        telegram_id = message.from_user.id
+        await asyncio.to_thread(self.db.ensure_user, telegram_id, message.from_user.username)
         
-        playlist_id = self.context_manager.get_active_playlist_id(telegram_id)
+        playlist_id = await self.context_manager.get_active_playlist_id(telegram_id)
         
         if not playlist_id:
-            send_message(update, NO_ACTIVE_PLAYLIST_SELECT, use_main_menu=True)
+            await send_message(message, NO_ACTIVE_PLAYLIST_SELECT, use_main_menu=True)
             return
         
-        playlist = self.db.get_playlist(playlist_id)
+        playlist = await asyncio.to_thread(self.db.get_playlist, playlist_id)
         if not playlist:
-            send_message(update, PLAYLIST_NOT_FOUND, use_main_menu=True)
+            await send_message(message, PLAYLIST_NOT_FOUND, use_main_menu=True)
             return
         
         # Проверяем доступ
-        if not self.db.check_playlist_access(playlist_id, telegram_id):
-            send_message(update, NO_PLAYLIST_ACCESS, use_main_menu=True)
+        if not await asyncio.to_thread(self.db.check_playlist_access, playlist_id, telegram_id):
+            await send_message(message, NO_PLAYLIST_ACCESS, use_main_menu=True)
             return
         
-        tracks = self.playlist_service.get_playlist_tracks(playlist_id, telegram_id)
+        tracks = await self.playlist_service.get_playlist_tracks(playlist_id, telegram_id)
         if tracks is None:
-            update.effective_message.reply_text(
+            await message.answer(
                 "❌ Не удалось загрузить плейлист. Возможно, проблема с доступом к Яндекс.Музыке.",
                 reply_markup=get_main_menu_keyboard()
             )
@@ -414,7 +424,7 @@ class CommandHandlers:
         
         if not tracks:
             title = playlist.get("title") or "Плейлист"
-            update.effective_message.reply_text(
+            await message.answer(
                 f"📋 Плейлист «{title}» пуст.\n\n"
                 f"💡 Отправьте ссылку на трек, альбом или плейлист, чтобы добавить треки.",
                 reply_markup=get_main_menu_keyboard()
@@ -425,7 +435,7 @@ class CommandHandlers:
         lines = [f"🎵 {title} ({len(tracks)} треков):\n"]
         
         # Получаем клиент для создания YandexService
-        client = self.client_manager.get_client_for_playlist(playlist_id)
+        client = await self.client_manager.get_client_for_playlist(playlist_id)
         yandex_service = YandexService(client)
         
         for i, item in enumerate(tracks, start=1):
@@ -435,15 +445,15 @@ class CommandHandlers:
         chunk = 50
         for i in range(0, len(lines), chunk):
             part = "\n".join(lines[i:i+chunk])
-            update.effective_message.reply_text(part)
+            await message.answer(part)
     
-    def set_token_start(self, update: Update, context: CallbackContext) -> int:
+    async def set_token_start(self, message: Message, state: FSMContext):
         """Начало установки токена (FSM)."""
-        telegram_id = update.effective_user.id
-        self.db.ensure_user(telegram_id, update.effective_user.username)
+        telegram_id = message.from_user.id
+        await asyncio.to_thread(self.db.ensure_user, telegram_id, message.from_user.username)
         
         # FSM диалог
-        update.effective_message.reply_text(
+        await message.answer(
             "🔑 Установка токена Яндекс.Музыки\n\n"
             "⚠️ ВНИМАНИЕ: Вы передаете боту свой токен на свой страх и риск!\n\n"
             "Токен можно получить здесь:\n"
@@ -451,34 +461,35 @@ class CommandHandlers:
             "Введите ваш токен:",
             reply_markup=get_cancel_keyboard()
         )
-        return WAITING_TOKEN
+        await state.set_state(SetTokenStates.waiting_token)
     
-    def set_token_input(self, update: Update, context: CallbackContext) -> int:
+    async def set_token_input(self, message: Message, state: FSMContext):
         """Обработка ввода токена."""
-        telegram_id = update.effective_user.id
-        token = update.effective_message.text.strip()
+        telegram_id = message.from_user.id
+        token = message.text.strip()
         
         # Проверка на отмену
         if token.lower() in ["отмена", "❌ отмена", "/cancel", "/start"]:
-            return self.cancel_operation(update, context)
+            await self.cancel_operation(message, state)
+            return
         
         # Валидация
         if not token:
-            update.effective_message.reply_text(
+            await message.answer(
                 "❌ Токен не может быть пустым. Попробуйте еще раз:",
                 reply_markup=get_cancel_keyboard()
             )
-            return WAITING_TOKEN
+            return
         
-        if self.client_manager.set_user_token(telegram_id, token):
-            update.effective_message.reply_text(
+        if await self.client_manager.set_user_token(telegram_id, token):
+            await message.answer(
                 "✅ Токен успешно установлен!\n\n"
                 "Теперь ваши плейлисты будут создаваться в вашем аккаунте Яндекс.Музыки.",
                 reply_markup=get_main_menu_keyboard()
             )
-            self.db.log_action(telegram_id, "token_set", None, None)
+            await asyncio.to_thread(self.db.log_action, telegram_id, "token_set", None, None)
         else:
-            update.effective_message.reply_text(
+            await message.answer(
                 "❌ Не удалось установить токен.\n\n"
                 "Возможные причины:\n"
                 "• Токен недействителен\n"
@@ -487,501 +498,445 @@ class CommandHandlers:
                 "Проверьте правильность токена и попробуйте еще раз:",
                 reply_markup=get_cancel_keyboard()
             )
-            return WAITING_TOKEN
+            return
         
-        return ConversationHandler.END
+        await state.clear()
     
-    def edit_name_start(self, update: Update, context: CallbackContext) -> int:
+    async def edit_name_start(self, message_or_query, state: FSMContext):
         """Начало редактирования названия (FSM)."""
-        telegram_id = update.effective_user.id
-        self.db.ensure_user(telegram_id, update.effective_user.username)
-        
-        # Если это callback query, извлекаем playlist_id из data
-        playlist_id = None
-        if update.callback_query:
-            data = update.callback_query.data
-            if data.startswith("edit_name_"):
-                try:
-                    playlist_id = int(data.split("_")[-1])
-                except (ValueError, IndexError):
-                    if update.callback_query.message:
-                        update.callback_query.message.reply_text(
-                            "❌ Ошибка: неверный формат данных.",
-                            reply_markup=get_main_menu_keyboard()
-                        )
-                    return ConversationHandler.END
+        # Определяем, откуда пришел запрос
+        if isinstance(message_or_query, CallbackQuery):
+            query = message_or_query
+            message = query.message
+            telegram_id = query.from_user.id
+            # Извлекаем playlist_id из callback_data
+            data = query.data
+            try:
+                playlist_id = int(data.split("_")[-1])
+            except (ValueError, IndexError):
+                await message.answer(
+                    "❌ Ошибка: неверный формат данных.",
+                    reply_markup=get_main_menu_keyboard()
+                )
+                return
+            await query.answer()
         else:
-            # Проверяем, есть ли playlist_id в контексте
-            playlist_id = context.user_data.get('edit_playlist_id')
+            message = message_or_query
+            telegram_id = message.from_user.id
+            # Проверяем, есть ли playlist_id в состоянии FSM
+            state_data = await state.get_data()
+            playlist_id = state_data.get('edit_playlist_id')
+        
+        self.db.ensure_user(telegram_id, message.from_user.username if hasattr(message.from_user, 'username') else None)
         
         # FSM диалог
         if not playlist_id:
-            playlist_id = self.context_manager.get_active_playlist_id(telegram_id)
+            playlist_id = await self.context_manager.get_active_playlist_id(telegram_id)
         if not playlist_id:
-            send_message(update, NO_ACTIVE_PLAYLIST_SHORT, use_main_menu=True)
-            return ConversationHandler.END
+            await send_message(message, NO_ACTIVE_PLAYLIST_SHORT, use_main_menu=True)
+            return
         
         # Проверяем, что плейлист существует
         playlist = self.db.get_playlist(playlist_id)
         if not playlist:
-            send_message(update, PLAYLIST_NOT_FOUND, use_main_menu=True)
-            return ConversationHandler.END
+            await send_message(message, PLAYLIST_NOT_FOUND, use_main_menu=True)
+            return
         
         if not self.db.is_playlist_creator(playlist_id, telegram_id):
-            send_message(update, ONLY_CREATOR_CAN_CHANGE_NAME, use_main_menu=True)
-            return ConversationHandler.END
+            await send_message(message, ONLY_CREATOR_CAN_CHANGE_NAME, use_main_menu=True)
+            return
         
-        context.user_data['edit_playlist_id'] = playlist_id
+        await state.update_data(edit_playlist_id=playlist_id)
         
-        # Определяем, откуда пришел запрос (callback или message)
-        if update.callback_query:
-            update.callback_query.answer()
-            update.callback_query.message.reply_text(
-                "✏️ Изменение названия плейлиста\n\n"
-                "Введите новое название (максимум 100 символов):",
-                reply_markup=get_cancel_keyboard()
-            )
-        else:
-            update.effective_message.reply_text(
-                "✏️ Изменение названия плейлиста\n\n"
-                "Введите новое название (максимум 100 символов):",
-                reply_markup=get_cancel_keyboard()
-            )
-        return WAITING_EDIT_NAME
+        await message.answer(
+            "✏️ Изменение названия плейлиста\n\n"
+            "Введите новое название (максимум 100 символов):",
+            reply_markup=get_cancel_keyboard()
+        )
+        await state.set_state(EditNameStates.waiting_edit_name)
     
-    def edit_name_input(self, update: Update, context: CallbackContext) -> int:
+    async def edit_name_input(self, message: Message, state: FSMContext):
         """Обработка ввода нового названия."""
-        telegram_id = update.effective_user.id
-        new_title = update.effective_message.text.strip()
+        telegram_id = message.from_user.id
+        new_title = message.text.strip()
         
         # Проверка на отмену
         if new_title.lower() in ["отмена", "❌ отмена", "/cancel", "/start"]:
-            return self.cancel_operation(update, context)
+            await self.cancel_operation(message, state)
+            return
         
         # Валидация
         if not new_title:
-            update.effective_message.reply_text(
+            await message.answer(
                 "❌ Название не может быть пустым. Попробуйте еще раз:",
                 reply_markup=get_cancel_keyboard()
             )
-            return WAITING_EDIT_NAME
+            return
         
         if len(new_title) > 100:
-            update.effective_message.reply_text(
+            await message.answer(
                 "❌ Название слишком длинное (максимум 100 символов).\n\n"
                 "Введите более короткое название:",
                 reply_markup=get_cancel_keyboard()
             )
-            return WAITING_EDIT_NAME
+            return
         
-        playlist_id = context.user_data.get('edit_playlist_id')
+        state_data = await state.get_data()
+        playlist_id = state_data.get('edit_playlist_id')
         if not playlist_id:
-            send_message(update, PLAYLIST_NOT_FOUND_ERROR, use_main_menu=True)
-            return ConversationHandler.END
+            await send_message(message, PLAYLIST_NOT_FOUND_ERROR, use_main_menu=True)
+            await state.clear()
+            return
         
         # Используем PlaylistService для изменения имени в Яндекс.Музыке и БД
-        ok, error = self.playlist_service.edit_playlist_name(
+        ok, error = await self.playlist_service.edit_playlist_name(
             playlist_id, new_title, telegram_id
         )
         
         if ok:
-            update.effective_message.reply_text(
+            await message.answer(
                 f"✅ Название плейлиста изменено на «{new_title}»",
                 reply_markup=get_main_menu_keyboard()
             )
         else:
-            update.effective_message.reply_text(
+            await message.answer(
                 f"❌ Не удалось изменить название плейлиста.\n\n"
                 f"{error or 'Неизвестная ошибка'}",
                 reply_markup=get_main_menu_keyboard()
             )
         
-        # Очищаем контекст
-        context.user_data.pop('edit_playlist_id', None)
-        
-        return ConversationHandler.END
+        # Очищаем состояние
+        await state.clear()
     
-    def delete_playlist_cmd(self, update: Update, context: CallbackContext):
+    async def delete_playlist_cmd(self, message: Message):
         """Команда /delete_playlist."""
-        telegram_id = update.effective_user.id
-        self.db.ensure_user(telegram_id, update.effective_user.username)
+        telegram_id = message.from_user.id
+        await asyncio.to_thread(self.db.ensure_user, telegram_id, message.from_user.username)
         
         # Получаем активный плейлист
-        playlist_id = self.context_manager.get_active_playlist_id(telegram_id)
+        playlist_id = await self.context_manager.get_active_playlist_id(telegram_id)
         
         if not playlist_id:
-            update.effective_message.reply_text("У вас нет активного плейлиста.")
+            await message.answer("У вас нет активного плейлиста.")
             return
         
         # Проверяем, что пользователь - создатель
-        if not self.db.is_playlist_creator(playlist_id, telegram_id):
-            update.effective_message.reply_text("Только создатель плейлиста может удалять его.")
+        if not await asyncio.to_thread(self.db.is_playlist_creator, playlist_id, telegram_id):
+            await message.answer("Только создатель плейлиста может удалять его.")
             return
         
-        playlist = self.db.get_playlist(playlist_id)
+        playlist = await asyncio.to_thread(self.db.get_playlist, playlist_id)
         title = playlist.get("title") or "плейлист" if playlist else "плейлист"
         
         # Удаляем из БД (плейлист в Яндекс.Музыке остается, но мы теряем связь)
-        self.db.delete_playlist(playlist_id)
+        await asyncio.to_thread(self.db.delete_playlist, playlist_id)
         
         # Удаляем из контекста
         self.context_manager.clear_active_playlist(telegram_id)
         
-        update.effective_message.reply_text(f"✅ Плейлист «{title}» удален из базы данных бота.")
-        self.db.log_action(telegram_id, "playlist_deleted", playlist_id, None)
+        await message.answer(f"✅ Плейлист «{title}» удален из базы данных бота.")
+        await asyncio.to_thread(self.db.log_action, telegram_id, "playlist_deleted", playlist_id, None)
     
-    def delete_track_start(self, update: Update, context: CallbackContext) -> int:
+    async def delete_track_start(self, message_or_query, state: FSMContext):
         """Начало удаления трека (FSM)."""
-        telegram_id = update.effective_user.id
-        self.db.ensure_user(telegram_id, update.effective_user.username)
+        """Начало удаления трека (FSM)."""
+        # Определяем, откуда пришел запрос
+        if isinstance(message_or_query, CallbackQuery):
+            query = message_or_query
+            message = query.message
+            telegram_id = query.from_user.id
+            # Извлекаем playlist_id из callback_data
+            data = query.data
+            try:
+                playlist_id = int(data.split("_")[-1])
+            except (ValueError, IndexError):
+                await message.answer(
+                    "❌ Ошибка: неверный формат данных.",
+                    reply_markup=get_main_menu_keyboard()
+                )
+                return
+            await query.answer()
+        else:
+            message = message_or_query
+            telegram_id = message.from_user.id
+            playlist_id = None
         
-        # Если это callback query, извлекаем playlist_id из data
-        playlist_id = None
-        if update.callback_query:
-            data = update.callback_query.data
-            if data.startswith("delete_track_"):
-                try:
-                    playlist_id = int(data.split("_")[-1])
-                except (ValueError, IndexError):
-                    if update.callback_query.message:
-                        update.callback_query.message.reply_text(
-                            "❌ Ошибка: неверный формат данных.",
-                            reply_markup=get_main_menu_keyboard()
-                        )
-                    return ConversationHandler.END
+        await asyncio.to_thread(self.db.ensure_user, telegram_id, message.from_user.username if hasattr(message.from_user, 'username') else None)
         
         # FSM диалог
         if not playlist_id:
-            playlist_id = self.context_manager.get_active_playlist_id(telegram_id)
+            playlist_id = await self.context_manager.get_active_playlist_id(telegram_id)
         
         if not playlist_id:
-            if update.callback_query:
-                update.callback_query.message.reply_text(
-                    "❌ У вас нет активного плейлиста.\n\n"
-                    "💡 Используйте кнопки «📁 Мои плейлисты» или «📂 Общие плейлисты», чтобы выбрать плейлист.",
-                    reply_markup=get_main_menu_keyboard()
-                )
-            else:
-                update.effective_message.reply_text(
-                    "❌ У вас нет активного плейлиста.\n\n"
-                    "💡 Используйте кнопки «📁 Мои плейлисты» или «📂 Общие плейлисты», чтобы выбрать плейлист.",
-                    reply_markup=get_main_menu_keyboard()
-                )
-            return ConversationHandler.END
+            await message.answer(
+                "❌ У вас нет активного плейлиста.\n\n"
+                "💡 Используйте кнопки «📁 Мои плейлисты» или «📂 Общие плейлисты», чтобы выбрать плейлист.",
+                reply_markup=get_main_menu_keyboard()
+            )
+            return
         
         # Проверяем доступ
-        if not self.db.check_playlist_access(playlist_id, telegram_id, need_edit=True):
-            playlist = self.db.get_playlist(playlist_id)
+        if not await asyncio.to_thread(self.db.check_playlist_access, playlist_id, telegram_id, need_edit=True):
+            playlist = await asyncio.to_thread(self.db.get_playlist, playlist_id)
             title = playlist.get("title") or "плейлист" if playlist else "плейлист"
-            if update.callback_query:
-                update.callback_query.message.reply_text(
-                    f"❌ У вас нет прав на удаление треков из плейлиста «{title}».\n\n"
-                    f"💡 Только создатель или пользователи с правами редактирования могут удалять треки.",
-                    reply_markup=get_main_menu_keyboard()
-                )
-            else:
-                update.effective_message.reply_text(
-                    f"❌ У вас нет прав на удаление треков из плейлиста «{title}».\n\n"
-                    f"💡 Только создатель или пользователи с правами редактирования могут удалять треки.",
-                    reply_markup=get_main_menu_keyboard()
-                )
-            return ConversationHandler.END
+            await message.answer(
+                f"❌ У вас нет прав на удаление треков из плейлиста «{title}».\n\n"
+                f"💡 Только создатель или пользователи с правами редактирования могут удалять треки.",
+                reply_markup=get_main_menu_keyboard()
+            )
+            return
         
         # Получаем информацию о плейлисте для показа количества треков
-        tracks = self.playlist_service.get_playlist_tracks(playlist_id, telegram_id)
+        tracks = await self.playlist_service.get_playlist_tracks(playlist_id, telegram_id)
         if tracks is None:
-            if update.callback_query:
-                update.callback_query.message.reply_text(
-                    "❌ Не удалось загрузить плейлист.\n\n"
-                    "💡 Возможно, проблема с доступом к Яндекс.Музыке.",
-                    reply_markup=get_main_menu_keyboard()
-                )
-            else:
-                update.effective_message.reply_text(
-                    "❌ Не удалось загрузить плейлист.\n\n"
-                    "💡 Возможно, проблема с доступом к Яндекс.Музыке.",
-                    reply_markup=get_main_menu_keyboard()
-                )
-            return ConversationHandler.END
+            await message.answer(
+                "❌ Не удалось загрузить плейлист.\n\n"
+                "💡 Возможно, проблема с доступом к Яндекс.Музыке.",
+                reply_markup=get_main_menu_keyboard()
+            )
+            return
         
         total = len(tracks)
         
         if total == 0:
-            if update.callback_query:
-                update.callback_query.message.reply_text(
-                    "❌ Плейлист пуст. Нечего удалять.",
-                    reply_markup=get_main_menu_keyboard()
-                )
-            else:
-                update.effective_message.reply_text(
-                    "❌ Плейлист пуст. Нечего удалять.",
-                    reply_markup=get_main_menu_keyboard()
-                )
-            return ConversationHandler.END
+            await message.answer(
+                "❌ Плейлист пуст. Нечего удалять.",
+                reply_markup=get_main_menu_keyboard()
+            )
+            return
         
-        # Сохраняем playlist_id в контексте для FSM
-        context.user_data['delete_track_playlist_id'] = playlist_id
-        context.user_data['delete_track_total'] = total
+        # Сохраняем playlist_id в состоянии FSM
+        await state.update_data(delete_track_playlist_id=playlist_id, delete_track_total=total)
         
         playlist = self.db.get_playlist(playlist_id)
         playlist_title = playlist.get("title") or "плейлист" if playlist else "плейлист"
         
-        # Определяем, откуда пришел запрос (callback или message)
-        if update.callback_query:
-            update.callback_query.answer()
-            update.callback_query.message.reply_text(
-                f"🗑️ Удаление трека из плейлиста «{playlist_title}»\n\n"
-                f"В плейлисте {total} треков.\n\n"
-                f"Введите номер трека для удаления (от 1 до {total}):\n\n"
-                f"💡 Используйте /list, чтобы увидеть список треков с номерами.",
-                reply_markup=get_cancel_keyboard()
-            )
-        else:
-            update.effective_message.reply_text(
-                f"🗑️ Удаление трека из плейлиста «{playlist_title}»\n\n"
-                f"В плейлисте {total} треков.\n\n"
-                f"Введите номер трека для удаления (от 1 до {total}):\n\n"
-                f"💡 Используйте /list, чтобы увидеть список треков с номерами.",
-                reply_markup=get_cancel_keyboard()
-            )
-        return WAITING_TRACK_NUMBER
+        await message.answer(
+            f"🗑️ Удаление трека из плейлиста «{playlist_title}»\n\n"
+            f"В плейлисте {total} треков.\n\n"
+            f"Введите номер трека для удаления (от 1 до {total}):\n\n"
+            f"💡 Используйте /list, чтобы увидеть список треков с номерами.",
+            reply_markup=get_cancel_keyboard()
+        )
+        await state.set_state(DeleteTrackStates.waiting_track_number)
     
-    def delete_track_input(self, update: Update, context: CallbackContext) -> int:
+    async def delete_track_input(self, message: Message, state: FSMContext):
         """Обработка ввода номера трека для удаления."""
         import re
-        telegram_id = update.effective_user.id
-        raw = update.effective_message.text.strip()
+        telegram_id = message.from_user.id
+        raw = message.text.strip()
         
         logger.info(f"delete_track_input вызван для пользователя {telegram_id}, текст: {raw}")
         
         # Проверка на отмену (fallback должен обработать, но на всякий случай)
         if raw in ["❌ Отмена", "отмена", "Отмена"] or raw.lower() in ["отмена", "/cancel", "/start"]:
             logger.info(f"Обнаружена отмена в delete_track_input")
-            return self.cancel_operation(update, context)
+            await self.cancel_operation(message, state)
+            return
         
         # Валидация
         if not re.match(r"^\d+$", raw):
-            update.effective_message.reply_text(
+            await message.answer(
                 "❌ Неверный формат. Укажите номер трека (число).\n\n"
                 "💡 Попробуйте еще раз:",
                 reply_markup=get_cancel_keyboard()
             )
-            return WAITING_TRACK_NUMBER
+            return
         
         index = int(raw)
-        playlist_id = context.user_data.get('delete_track_playlist_id')
-        total = context.user_data.get('delete_track_total')
+        state_data = await state.get_data()
+        playlist_id = state_data.get('delete_track_playlist_id')
+        total = state_data.get('delete_track_total')
         
         if not playlist_id:
-            send_message(update, PLAYLIST_NOT_FOUND_ERROR, use_main_menu=True)
-            return ConversationHandler.END
+            await send_message(message, PLAYLIST_NOT_FOUND_ERROR, use_main_menu=True)
+            await state.clear()
+            return
         
         if index < 1 or index > total:
-            update.effective_message.reply_text(
+            await message.answer(
                 f"❌ Номер трека вне диапазона.\n\n"
                 f"💡 Доступные номера: 1..{total}\n"
                 f"Введите номер еще раз:",
                 reply_markup=get_cancel_keyboard()
             )
-            return WAITING_TRACK_NUMBER
+            return
         
-        playlist = self.db.get_playlist(playlist_id)
+        playlist = await asyncio.to_thread(self.db.get_playlist, playlist_id)
         if not playlist:
-            update.effective_message.reply_text(
+            await message.answer(
                 "❌ Плейлист не найден.",
                 reply_markup=get_main_menu_keyboard()
             )
-            return ConversationHandler.END
+            await state.clear()
+            return
         
-        tracks = self.playlist_service.get_playlist_tracks(playlist_id, telegram_id)
+        tracks = await self.playlist_service.get_playlist_tracks(playlist_id, telegram_id)
         if tracks is None:
-            update.effective_message.reply_text(
+            await message.answer(
                 "❌ Не удалось загрузить плейлист.\n\n"
                 "💡 Возможно, проблема с доступом к Яндекс.Музыке.",
                 reply_markup=get_main_menu_keyboard()
             )
-            return ConversationHandler.END
+            await state.clear()
+            return
         
         if index < 1 or index > len(tracks):
-            update.effective_message.reply_text(
+            await message.answer(
                 f"❌ Номер трека вне диапазона.\n\n"
                 f"💡 Доступные номера: 1..{len(tracks)}\n"
                 f"Введите номер еще раз:",
                 reply_markup=get_cancel_keyboard()
             )
-            return WAITING_TRACK_NUMBER
+            return
         
         # Получаем информацию о треке перед удалением
         item = tracks[index - 1]
         
         # Получаем клиент для создания YandexService
-        client = self.client_manager.get_client_for_playlist(playlist_id)
+        client = await self.client_manager.get_client_for_playlist(playlist_id)
         yandex_service = YandexService(client)
         track_display = yandex_service.format_track(item)
         
         from_idx = index - 1
         to_idx = index - 1
-        ok, err = self.playlist_service.delete_track(playlist_id, from_idx, to_idx, telegram_id)
+        ok, err = await self.playlist_service.delete_track(playlist_id, from_idx, to_idx, telegram_id)
         
         if ok:
             track_info = f"«{track_display}»"
-            update.effective_message.reply_text(
+            await message.answer(
                 f"✅ Трек №{index} {track_info} удалён из плейлиста.",
                 reply_markup=get_main_menu_keyboard()
             )
         else:
-            update.effective_message.reply_text(
+            await message.answer(
                 f"❌ Не удалось удалить трек: {err}\n\n"
                 f"💡 Попробуйте еще раз или проверьте права доступа.",
                 reply_markup=get_main_menu_keyboard()
             )
         
-        # Очищаем контекст
-        context.user_data.pop('delete_track_playlist_id', None)
-        context.user_data.pop('delete_track_total', None)
-        
-        return ConversationHandler.END
+        # Очищаем состояние
+        await state.clear()
     
-    def set_cover_start(self, update: Update, context: CallbackContext) -> int:
+    async def set_cover_start(self, query: CallbackQuery, state: FSMContext):
         """Начало установки обложки (FSM)."""
-        telegram_id = update.effective_user.id
-        self.db.ensure_user(telegram_id, update.effective_user.username)
+        telegram_id = query.from_user.id
+        message = query.message
+        self.db.ensure_user(telegram_id, query.from_user.username)
         
-        # Если это callback query, извлекаем playlist_id из data
-        playlist_id = None
-        if update.callback_query:
-            data = update.callback_query.data
-            if data.startswith("set_cover_"):
-                try:
-                    playlist_id = int(data.split("_")[-1])
-                except (ValueError, IndexError):
-                    if update.callback_query.message:
-                        update.callback_query.message.reply_text(
-                            "❌ Ошибка: неверный формат данных.",
-                            reply_markup=get_main_menu_keyboard()
-                        )
-                    return ConversationHandler.END
-        else:
-            # Проверяем, есть ли playlist_id в контексте
-            playlist_id = context.user_data.get('set_cover_playlist_id')
+        # Извлекаем playlist_id из callback_data
+        data = query.data
+        try:
+            playlist_id = int(data.split("_")[-1])
+        except (ValueError, IndexError):
+            await message.answer(
+                "❌ Ошибка: неверный формат данных.",
+                reply_markup=get_main_menu_keyboard()
+            )
+            return
         
         # FSM диалог
         if not playlist_id:
-            playlist_id = self.context_manager.get_active_playlist_id(telegram_id)
+            playlist_id = await self.context_manager.get_active_playlist_id(telegram_id)
         if not playlist_id:
-            if update.callback_query:
-                update.callback_query.message.reply_text(
-                    "❌ У вас нет активного плейлиста.",
-                    reply_markup=get_main_menu_keyboard()
-                )
-            else:
-                update.effective_message.reply_text(
-                    "❌ У вас нет активного плейлиста.",
-                    reply_markup=get_main_menu_keyboard()
-                )
-            return ConversationHandler.END
+            await message.answer(
+                "❌ У вас нет активного плейлиста.",
+                reply_markup=get_main_menu_keyboard()
+            )
+            return
         
         # Проверяем, что плейлист существует
         playlist = self.db.get_playlist(playlist_id)
         if not playlist:
-            send_message(update, PLAYLIST_NOT_FOUND, use_main_menu=True)
-            return ConversationHandler.END
+            await send_message(message, PLAYLIST_NOT_FOUND, use_main_menu=True)
+            return
         
         if not self.db.is_playlist_creator(playlist_id, telegram_id):
-            send_message(update, ONLY_CREATOR_CAN_CHANGE_COVER, use_main_menu=True)
-            return ConversationHandler.END
+            await send_message(message, ONLY_CREATOR_CAN_CHANGE_COVER, use_main_menu=True)
+            return
         
-        context.user_data['set_cover_playlist_id'] = playlist_id
+        await state.update_data(set_cover_playlist_id=playlist_id)
+        await query.answer()
         
-        # Определяем, откуда пришел запрос (callback или message)
-        if update.callback_query:
-            update.callback_query.answer()
-            update.callback_query.message.reply_text(
-                "🖼️ Установка обложки плейлиста\n\n"
-                "Отправьте фото для обложки плейлиста:",
-                reply_markup=get_cancel_keyboard()
-            )
-        else:
-            update.effective_message.reply_text(
-                "🖼️ Установка обложки плейлиста\n\n"
-                "Отправьте фото для обложки плейлиста:",
-                reply_markup=get_cancel_keyboard()
-            )
-        return WAITING_PLAYLIST_COVER
+        await message.answer(
+            "🖼️ Установка обложки плейлиста\n\n"
+            "Отправьте фото для обложки плейлиста:",
+            reply_markup=get_cancel_keyboard()
+        )
+        await state.set_state(SetCoverStates.waiting_playlist_cover)
     
-    def set_cover_input(self, update: Update, context: CallbackContext) -> int:
+    async def set_cover_input(self, message: Message, state: FSMContext):
         """Обработка ввода обложки."""
-        telegram_id = update.effective_user.id
+        telegram_id = message.from_user.id
         
         # Проверяем, что это фото
-        if not update.effective_message.photo:
-            update.effective_message.reply_text(
+        if not message.photo:
+            await message.answer(
                 "❌ Пожалуйста, отправьте фото для обложки.\n\n"
                 "💡 Попробуйте еще раз:",
                 reply_markup=get_cancel_keyboard()
             )
-            return WAITING_PLAYLIST_COVER
+            return
         
-        playlist_id = context.user_data.get('set_cover_playlist_id')
+        state_data = await state.get_data()
+        playlist_id = state_data.get('set_cover_playlist_id')
         if not playlist_id:
-            send_message(update, PLAYLIST_NOT_FOUND_ERROR, use_main_menu=True)
-            return ConversationHandler.END
+            await send_message(message, PLAYLIST_NOT_FOUND_ERROR, use_main_menu=True)
+            await state.clear()
+            return
         
         # Получаем фото (берем самое большое)
-        photo = update.effective_message.photo[-1]
+        photo = message.photo[-1]
         
-        update.effective_message.reply_text("⏳ Загружаю обложку...")
+        await message.answer("⏳ Загружаю обложку...")
         
         # Скачиваем фото
-        file = photo.get_file()
-        image_file = file.download_as_bytearray()
+        bot = Bot.get_current()
+        file = await bot.get_file(photo.file_id)
+        image_bytes = await bot.download_file(file.file_path)
+        # Читаем байты из BytesIO
+        image_file = image_bytes.read() if hasattr(image_bytes, 'read') else image_bytes
         
         # Устанавливаем обложку
-        ok, err = self.playlist_service.set_playlist_cover(playlist_id, image_file, telegram_id)
+        ok, err = await self.playlist_service.set_playlist_cover(playlist_id, image_file, telegram_id)
         
         if ok:
-            update.effective_message.reply_text(
+            await message.answer(
                 "✅ Обложка плейлиста успешно установлена!",
                 reply_markup=get_main_menu_keyboard()
             )
         else:
-            update.effective_message.reply_text(
+            await message.answer(
                 f"❌ Не удалось установить обложку: {err}\n\n"
                 f"💡 Попробуйте еще раз или проверьте права доступа.",
                 reply_markup=get_main_menu_keyboard()
             )
         
-        # Очищаем контекст
-        context.user_data.pop('set_cover_playlist_id', None)
-        
-        return ConversationHandler.END
+        # Очищаем состояние
+        await state.clear()
     
-    def cancel_operation(self, update: Update, context: CallbackContext) -> int:
+    async def cancel_operation(self, message: Message, state: FSMContext):
         """Отмена текущей операции."""
-        # Очищаем контекст FSM
-        context.user_data.pop('delete_track_playlist_id', None)
-        context.user_data.pop('delete_track_total', None)
-        context.user_data.pop('edit_playlist_id', None)
-        context.user_data.pop('set_cover_playlist_id', None)
+        # Очищаем состояние FSM
+        await state.clear()
         
-        update.effective_message.reply_text(
+        await message.answer(
             "❌ Операция отменена.",
             reply_markup=get_main_menu_keyboard()
         )
-        return ConversationHandler.END
     
-    def buy_limit(self, update: Update, context: CallbackContext):
+    async def buy_limit(self, message: Message):
         """Команда для покупки расширенного лимита."""
-        telegram_id = update.effective_user.id
-        self.db.ensure_user(telegram_id, update.effective_user.username)
+        telegram_id = message.from_user.id
+        await asyncio.to_thread(self.db.ensure_user, telegram_id, message.from_user.username)
         
         # Получаем доступные планы
         payment_service = PaymentService(self.db)
         plans = payment_service.get_available_plans()
         
         # Получаем текущий лимит пользователя
-        current_limit = self.db.get_user_playlist_limit(telegram_id)
-        current_count = self.db.count_user_playlists(telegram_id)
+        current_limit = await asyncio.to_thread(self.db.get_user_playlist_limit, telegram_id)
+        current_count = await asyncio.to_thread(self.db.count_user_playlists, telegram_id)
         limit_text = "безлимитно" if current_limit == -1 else f"{current_limit} плейлистов"
         
         # Формируем клавиатуру с тарифами
@@ -989,14 +944,14 @@ class CommandHandlers:
         for plan_id, plan_data in plans.items():
             button_text = f"⭐ {plan_data['name']} — {plan_data['stars']} Stars"
             keyboard.append([InlineKeyboardButton(
-                button_text,
+                text=button_text,
                 callback_data=f"buy_{plan_id}"
             )])
-        keyboard.append([InlineKeyboardButton("❌ Отмена", callback_data="cancel_payment")])
+        keyboard.append([InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_payment")])
         
-        reply_markup = InlineKeyboardMarkup(keyboard)
+        reply_markup = InlineKeyboardMarkup(inline_keyboard=keyboard)
         
-        update.effective_message.reply_text(
+        await message.answer(
             f"💳 Выберите тарифный план:\n\n"
             f"📊 Текущий лимит: {limit_text}\n"
             f"📁 Создано плейлистов: {current_count}\n\n"
@@ -1005,68 +960,68 @@ class CommandHandlers:
             reply_markup=reply_markup
         )
     
-    def handle_pre_checkout_query(self, update: Update, context: CallbackContext):
+    async def handle_pre_checkout_query(self, pre_checkout_query: PreCheckoutQuery):
         """Обработка pre_checkout_query."""
-        query = update.pre_checkout_query
-        telegram_id = query.from_user.id
+        telegram_id = pre_checkout_query.from_user.id
         
         # Проверяем платеж
         payment_service = PaymentService(self.db)
-        payment = self.db.get_payment_by_payload(query.invoice_payload)
+        payment = await asyncio.to_thread(self.db.get_payment_by_payload, pre_checkout_query.invoice_payload)
+        
+        bot = Bot.get_current()
         
         if not payment or payment['status'] != 'pending':
             # Отклоняем платеж
-            context.bot.answer_pre_checkout_query(
-                pre_checkout_query_id=query.id,
+            await bot.answer_pre_checkout_query(
+                pre_checkout_query_id=pre_checkout_query.id,
                 ok=False,
                 error_message="Платеж не найден или уже обработан"
             )
             return
         
         # Проверяем сумму
-        if payment['stars_amount'] != query.total_amount:
-            context.bot.answer_pre_checkout_query(
-                pre_checkout_query_id=query.id,
+        if payment['stars_amount'] != pre_checkout_query.total_amount:
+            await bot.answer_pre_checkout_query(
+                pre_checkout_query_id=pre_checkout_query.id,
                 ok=False,
                 error_message="Сумма платежа не совпадает"
             )
             return
         
         # Подтверждаем платеж
-        context.bot.answer_pre_checkout_query(
-            pre_checkout_query_id=query.id,
+        await bot.answer_pre_checkout_query(
+            pre_checkout_query_id=pre_checkout_query.id,
             ok=True
         )
     
-    def handle_successful_payment(self, update: Update, context: CallbackContext):
+    async def handle_successful_payment(self, message: Message, successful_payment: SuccessfulPayment):
         """Обработка успешного платежа."""
-        payment = update.message.successful_payment
-        telegram_id = update.effective_user.id
+        telegram_id = message.from_user.id
         
         payment_service = PaymentService(self.db)
         success = payment_service.process_successful_payment(
             telegram_id=telegram_id,
-            invoice_payload=payment.invoice_payload,
-            stars_amount=payment.total_amount
+            invoice_payload=successful_payment.invoice_payload,
+            stars_amount=successful_payment.total_amount
         )
         
         if success:
             # Получаем информацию о новой подписке
-            subscription = self.db.get_active_subscription(telegram_id)
+            subscription = await asyncio.to_thread(self.db.get_active_subscription, telegram_id)
             if subscription:
                 plan = payment_service.get_available_plans()[subscription['subscription_type']]
                 limit = plan['limit']
                 limit_text = "безлимитно" if limit == -1 else f"{limit} плейлистов"
                 
-                update.message.reply_text(
+                await message.answer(
                     f"✅ Платеж успешно обработан!\n\n"
                     f"🎉 Ваш лимит увеличен до {limit_text}\n\n"
                     f"Теперь вы можете создавать больше плейлистов!",
                     reply_markup=get_main_menu_keyboard()
                 )
-                self.db.log_action(telegram_id, "subscription_purchased", None, f"type={subscription['subscription_type']}")
+                await asyncio.to_thread(self.db.log_action, telegram_id, "subscription_purchased", None, f"type={subscription['subscription_type']}")
         else:
-            update.message.reply_text(
+            await message.answer(
                 "❌ Произошла ошибка при обработке платежа.\n"
                 "Пожалуйста, свяжитесь с поддержкой.",
                 reply_markup=get_main_menu_keyboard()
