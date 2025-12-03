@@ -2,6 +2,7 @@
 Модуль для управления контекстом пользователей.
 Хранит информацию о выбранном плейлисте для каждого пользователя.
 """
+import asyncio
 from typing import Optional, Dict
 from database import DatabaseInterface
 
@@ -19,7 +20,7 @@ class UserContextManager:
         self.db = db
         self._contexts: Dict[int, Dict] = {}  # {telegram_id: {"current_playlist_id": ...}}
     
-    def get_active_playlist_id(self, telegram_id: int) -> Optional[int]:
+    async def get_active_playlist_id(self, telegram_id: int) -> Optional[int]:
         """
         Получить ID активного плейлиста пользователя.
         
@@ -33,7 +34,7 @@ class UserContextManager:
             return self._contexts[telegram_id]["current_playlist_id"]
         
         # Пытаемся взять первый доступный плейлист
-        playlists = self.db.get_user_playlists(telegram_id)
+        playlists = await asyncio.to_thread(self.db.get_user_playlists, telegram_id)
         if playlists:
             playlist_id = playlists[0]["id"]
             if telegram_id not in self._contexts:
@@ -64,7 +65,7 @@ class UserContextManager:
         if telegram_id in self._contexts:
             self._contexts[telegram_id].pop("current_playlist_id", None)
     
-    def get_active_playlist_info(self, telegram_id: int) -> Optional[str]:
+    async def get_active_playlist_info(self, telegram_id: int) -> Optional[str]:
         """
         Получить информацию об активном плейлисте.
         
@@ -76,7 +77,7 @@ class UserContextManager:
         """
         if telegram_id in self._contexts and "current_playlist_id" in self._contexts[telegram_id]:
             playlist_id = self._contexts[telegram_id]["current_playlist_id"]
-            playlist = self.db.get_playlist(playlist_id)
+            playlist = await asyncio.to_thread(self.db.get_playlist, playlist_id)
             if playlist:
                 title = playlist.get("title") or "Без названия"
                 return f"🎵 Активный плейлист: «{title}»"

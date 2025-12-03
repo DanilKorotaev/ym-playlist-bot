@@ -1,17 +1,18 @@
 # Architecture
 
-## Текущая реализация (v3.0)
+## Текущая реализация (v4.0)
 
 ### Telegram Layer
-- **Библиотека**: `python-telegram-bot==13.15` (синхронная версия)
-- **Обработчики**: CommandHandler, MessageHandler, CallbackQueryHandler
-- **FSM**: Реализовано через ConversationHandler для интерактивных диалогов
-- **Основной файл**: `bot.py` (только инициализация и регистрация handlers)
+- **Библиотека**: `aiogram==3.16.0` (асинхронная версия) ✅
+- **Обработчики**: Используется `dp.message.register()` и `dp.callback_query.register()` для регистрации handlers
+- **FSM**: Реализовано через aiogram FSM (`StatesGroup` и `FSMContext`) для интерактивных диалогов
+- **Основной файл**: `bot.py` (инициализация `Bot` и `Dispatcher`, регистрация handlers)
 - **Модули**:
-  - `handlers/commands.py` - обработчики команд бота
-  - `handlers/callbacks.py` - обработчики callback query
-  - `handlers/messages.py` - обработчики текстовых сообщений
+  - `handlers/commands.py` - обработчики команд бота (все методы `async def`)
+  - `handlers/callbacks.py` - обработчики callback query (все методы `async def`)
+  - `handlers/messages.py` - обработчики текстовых сообщений (все методы `async def`)
   - `handlers/keyboards.py` - клавиатуры Telegram
+  - `handlers/states.py` - определения FSM состояний через `StatesGroup`
 
 ### Domain Layer (Services)
 - **YandexClientManager** (`yandex_client_manager.py`): 
@@ -250,8 +251,8 @@ print(f"Текущий лимит: {user_limit} плейлистов" if user_li
 - **Улучшение ссылок на плейлисты**: Отображение ссылки в формате `https://music.yandex.ru/playlists/{uuid}` вместо текущего формата с owner_id и playlist_kind.
 
 ### Технические улучшения
-- **Telegram Layer**: Миграция на `aiogram 3.x` с полноценной FSM-логикой
-- **Storage Layer**: Улучшение работы с PostgreSQL через async SQLAlchemy
+- **Telegram Layer**: ✅ Миграция на `aiogram 3.x` с полноценной FSM-логикой завершена
+- **Storage Layer**: Синхронные вызовы БД обернуты в `asyncio.to_thread()` для неблокирующей работы. В будущем можно мигрировать на `asyncpg`/`aiosqlite` для полной асинхронности
 - **Docker**: docker-compose с сервисами bot + db + pgadmin (уже реализовано)
 - **Config**: pydantic-based settings для валидации конфигурации
 - **Тесты**: Добавление unit-тестов для services и handlers
