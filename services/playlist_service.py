@@ -220,6 +220,7 @@ class PlaylistService:
     async def get_yandex_link(self, playlist_id: int) -> Optional[str]:
         """
         Получить ссылку на плейлист в Яндекс.Музыке.
+        Использует короткий формат с UUID, если доступен, иначе старый формат.
         
         Args:
             playlist_id: ID плейлиста в БД
@@ -231,6 +232,12 @@ class PlaylistService:
         if not playlist:
             return None
         
+        # Пробуем использовать UUID для короткой ссылки
+        playlist_uuid = playlist.get("uuid")
+        if playlist_uuid:
+            return f"https://music.yandex.ru/playlists/{playlist_uuid}"
+        
+        # Fallback на старый формат, если UUID нет
         owner_id = playlist.get("owner_id")
         playlist_kind = playlist.get("playlist_kind")
         
@@ -369,7 +376,7 @@ class PlaylistService:
     async def sync_playlist_from_api(self, playlist_id: int, telegram_id: int) -> Tuple[bool, Optional[str]]:
         """
         Синхронизировать данные плейлиста из API Яндекс.Музыки с БД.
-        Обновляет название и URL обложки (только для пользовательских обложек).
+        Обновляет название, URL обложки (только для пользовательских обложек) и UUID.
         
         Args:
             playlist_id: ID плейлиста в БД
@@ -390,7 +397,7 @@ class PlaylistService:
         owner_id = playlist["owner_id"]
         
         # Получаем актуальные данные из API (обертываем синхронный вызов)
-        title, cover_url, error = await asyncio.to_thread(
+        title, cover_url, playlist_uuid, error = await asyncio.to_thread(
             yandex_service.get_playlist_info_for_sync, playlist_kind, owner_id
         )
         
@@ -404,6 +411,9 @@ class PlaylistService:
         if cover_url != playlist.get("cover_url"):
             # Обновляем cover_url (может быть None, если обложка не пользовательская)
             updates["cover_url"] = cover_url
+        if playlist_uuid and playlist_uuid != playlist.get("uuid"):
+            # Обновляем UUID, если он доступен и изменился
+            updates["uuid"] = playlist_uuid
         
         if updates:
             await asyncio.to_thread(self.db.update_playlist, playlist_id, **updates)

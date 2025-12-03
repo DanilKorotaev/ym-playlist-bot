@@ -517,7 +517,7 @@ class YandexService:
         
         return None
     
-    def get_playlist_info_for_sync(self, playlist_id: str, owner: Optional[str] = None) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+    def get_playlist_info_for_sync(self, playlist_id: str, owner: Optional[str] = None) -> Tuple[Optional[str], Optional[str], Optional[str], Optional[str]]:
         """
         Получить информацию о плейлисте для синхронизации с БД.
         
@@ -526,12 +526,13 @@ class YandexService:
             owner: ID владельца (опционально)
             
         Returns:
-            Кортеж (title, cover_url, None) или (None, None, error_message)
+            Кортеж (title, cover_url, uuid, None) или (None, None, None, error_message)
             cover_url будет None, если обложка не является пользовательской (custom=False)
+            uuid будет None, если UUID недоступен
         """
         pl_obj, err = self.get_playlist(playlist_id, owner)
         if pl_obj is None:
-            return None, None, err or "Не удалось получить плейлист"
+            return None, None, None, err or "Не удалось получить плейлист"
         
         # Получаем название
         title = getattr(pl_obj, "title", None)
@@ -539,5 +540,10 @@ class YandexService:
         # Получаем URL обложки (только для пользовательских)
         cover_url = self.get_playlist_cover_url(playlist_id, owner, only_custom=True)
         
-        return title, cover_url, None
+        # Получаем UUID плейлиста (может быть в разных атрибутах)
+        playlist_uuid = getattr(pl_obj, "uuid", None) or getattr(pl_obj, "playlist_uuid", None)
+        if playlist_uuid:
+            playlist_uuid = str(playlist_uuid)
+        
+        return title, cover_url, playlist_uuid, None
 

@@ -83,6 +83,7 @@ class SQLiteDatabase(DatabaseInterface):
                     cover_url TEXT,
                     share_token TEXT UNIQUE,
                     insert_position TEXT DEFAULT 'end' CHECK (insert_position IN ('start', 'end')),
+                    uuid TEXT,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     FOREIGN KEY (creator_telegram_id) REFERENCES users(telegram_id),
@@ -93,6 +94,13 @@ class SQLiteDatabase(DatabaseInterface):
             # Миграция: добавляем поле insert_position если его нет
             try:
                 cursor.execute("ALTER TABLE playlists ADD COLUMN insert_position TEXT DEFAULT 'end'")
+            except sqlite3.OperationalError:
+                # Колонка уже существует
+                pass
+            
+            # Миграция: добавляем поле uuid если его нет
+            try:
+                cursor.execute("ALTER TABLE playlists ADD COLUMN uuid TEXT")
             except sqlite3.OperationalError:
                 # Колонка уже существует
                 pass
@@ -272,15 +280,16 @@ class SQLiteDatabase(DatabaseInterface):
     
     def create_playlist(self, playlist_kind: str, owner_id: str, creator_telegram_id: int,
                        yandex_account_id: Optional[int] = None, title: Optional[str] = None,
-                       share_token: Optional[str] = None, insert_position: str = 'end') -> int:
+                       share_token: Optional[str] = None, insert_position: str = 'end',
+                       uuid: Optional[str] = None) -> int:
         """Создать новый плейлист."""
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("""
                 INSERT INTO playlists (playlist_kind, owner_id, creator_telegram_id, 
-                                     yandex_account_id, title, share_token, insert_position)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            """, (playlist_kind, owner_id, creator_telegram_id, yandex_account_id, title, share_token, insert_position))
+                                     yandex_account_id, title, share_token, insert_position, uuid)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """, (playlist_kind, owner_id, creator_telegram_id, yandex_account_id, title, share_token, insert_position, uuid))
             playlist_id = cursor.lastrowid
             
             # Автоматически даем создателю полный доступ
@@ -369,7 +378,8 @@ class SQLiteDatabase(DatabaseInterface):
     
     def update_playlist(self, playlist_id: int, title: Optional[str] = None,
                        description: Optional[str] = None, cover_url: Optional[str] = None,
-                       share_token: Optional[str] = None, insert_position: Optional[str] = None):
+                       share_token: Optional[str] = None, insert_position: Optional[str] = None,
+                       uuid: Optional[str] = None):
         """Обновить информацию о плейлисте."""
         with self.get_connection() as conn:
             cursor = conn.cursor()
@@ -391,6 +401,9 @@ class SQLiteDatabase(DatabaseInterface):
             if insert_position is not None:
                 updates.append("insert_position = ?")
                 params.append(insert_position)
+            if uuid is not None:
+                updates.append("uuid = ?")
+                params.append(uuid)
             
             if updates:
                 updates.append("updated_at = CURRENT_TIMESTAMP")

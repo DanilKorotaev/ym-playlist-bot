@@ -218,12 +218,17 @@ class YandexClientManager:
                 playlist = client.users_playlists_create(title)
                 if not playlist:
                     logger.error("Не удалось создать плейлист")
-                    return None, None
+                    return None, None, None
                 
                 playlist_kind = str(playlist.kind)
-                return uid, playlist_kind
+                # Получаем UUID плейлиста (может быть в разных атрибутах)
+                playlist_uuid = getattr(playlist, "uuid", None) or getattr(playlist, "playlist_uuid", None)
+                if playlist_uuid:
+                    playlist_uuid = str(playlist_uuid)
+                
+                return uid, playlist_kind, playlist_uuid
             
-            uid, playlist_kind = await asyncio.to_thread(_get_uid_and_create_playlist, client, title)
+            uid, playlist_kind, playlist_uuid = await asyncio.to_thread(_get_uid_and_create_playlist, client, title)
             if uid is None:
                 return None
             
@@ -243,7 +248,8 @@ class YandexClientManager:
                 owner_id=uid,
                 creator_telegram_id=creator_id,
                 yandex_account_id=yandex_account_id,
-                title=title
+                title=title,
+                uuid=playlist_uuid
             )
             
             # Генерируем токен для шаринга
