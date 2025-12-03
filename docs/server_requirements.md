@@ -15,7 +15,7 @@ Telegram-бот для управления плейлистами Яндекс.
 
 **Технологический стек:**
 - Python 3.12
-- python-telegram-bot 13.15 (синхронная версия)
+- aiogram 3.16.0 (асинхронная версия) ✅
 - yandex-music 2.2.0
 - PostgreSQL 15 / SQLite
 - Docker & Docker Compose
@@ -33,7 +33,7 @@ Telegram-бот для управления плейлистами Яндекс.
 
 **RAM:**
 - Базовое потребление Python процесса: ~50-100 MB
-- Библиотеки (python-telegram-bot, yandex-music): ~30-50 MB
+- Библиотеки (aiogram, yandex-music): ~30-50 MB
 - Кэш соединений: минимальный
 - **Итого в режиме простоя: ~80-150 MB**
 

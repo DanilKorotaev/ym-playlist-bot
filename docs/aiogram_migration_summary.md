@@ -119,6 +119,66 @@ client = await self.client_manager.get_client(telegram_id)
 playlist = await self.client_manager.create_playlist(telegram_id, title)
 ```
 
+### 7. Получение экземпляра Bot
+
+**Было:**
+```python
+from aiogram import Bot
+bot = Bot.get_current()  # Устаревший метод
+bot_info = await bot.get_me()
+```
+
+**Стало:**
+```python
+# Bot доступен через объекты событий
+bot_info = await message.bot.get_me()  # В message handlers
+# или
+bot_info = await query.bot.get_me()  # В callback handlers
+```
+
+### 8. Создание клавиатур
+
+**Было:**
+```python
+from telegram import ReplyKeyboardMarkup
+
+keyboard = ReplyKeyboardMarkup(
+    [["Кнопка 1", "Кнопка 2"]],
+    resize_keyboard=True
+)
+```
+
+**Стало:**
+```python
+from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
+
+keyboard = ReplyKeyboardMarkup(
+    keyboard=[
+        [
+            KeyboardButton(text="Кнопка 1"),
+            KeyboardButton(text="Кнопка 2")
+        ]
+    ],
+    resize_keyboard=True
+)
+```
+
+### 9. Обработчик ошибок
+
+**Было:**
+```python
+async def error_handler(update, exception):
+    logger.error(f"Ошибка: {exception}")
+```
+
+**Стало:**
+```python
+async def error_handler(event, data):
+    # В aiogram 3.x обработчик вызывается с (event, data)
+    exception = data.get('exception') if isinstance(data, dict) else data
+    logger.error(f"Ошибка: {exception}", exc_info=exception)
+```
+
 ## Преимущества миграции
 
 1. **Производительность**: Асинхронная обработка позволяет обрабатывать больше запросов одновременно
