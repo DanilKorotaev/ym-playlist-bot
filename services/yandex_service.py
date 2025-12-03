@@ -206,16 +206,22 @@ class YandexService:
         """
         Удалить трек из плейлиста через API Яндекс.Музыки.
         Автоматически получает актуальную revision и делает повторные попытки при ошибках.
+        Проверяет количество треков до и после удаления для валидации успешности операции.
         
         Args:
             playlist_kind: ID плейлиста (kind)
             owner_id: ID владельца плейлиста
-            from_idx: Начальный индекс (0-based)
-            to_idx: Конечный индекс (0-based)
+            from_idx: Начальный индекс (0-based, включительный)
+            to_idx: Конечный индекс (0-based, включительный)
             max_retries: Максимальное количество попыток при ошибке revision
             
         Returns:
             Кортеж (успех, сообщение об ошибке)
+            
+        Note:
+            API использует 'to' как исключительный индекс (exclusive), поэтому при формировании
+            запроса to_idx увеличивается на 1. Например, для удаления трека с индексом 7
+            отправляется from:7, to:8.
         """
         for attempt in range(max_retries):
             try:
@@ -224,25 +230,166 @@ class YandexService:
                 if pl is None:
                     return False, "Не удалось получить плейлист."
                 
+                # Получаем треки до удаления
+                tracks_before = getattr(pl, "tracks", []) or []
+                tracks_count_before = len(tracks_before)
+                
+                # Валидация индексов
+                if from_idx < 0 or to_idx < 0:
+                    return False, f"Неверные индексы: from_idx={from_idx}, to_idx={to_idx}"
+                
+                if from_idx >= tracks_count_before or to_idx >= tracks_count_before:
+                    return False, f"Индексы выходят за границы плейлиста (треков: {tracks_count_before}, индексы: {from_idx}-{to_idx})"
+                
+                if from_idx > to_idx:
+                    return False, f"Неверный диапазон: from_idx ({from_idx}) > to_idx ({to_idx})"
+                
+                # Вычисляем ожидаемое количество треков после удаления
+                # to_idx - включительный индекс (inclusive), поэтому +1 для подсчета
+                expected_deleted_count = to_idx - from_idx + 1
+                expected_tracks_count_after = tracks_count_before - expected_deleted_count
+                
                 revision = getattr(pl, "revision", 1)
                 
+                # API использует 'to' как исключительный индекс (exclusive), поэтому увеличиваем на 1
+                # Например, для удаления трека с индексом 7 нужно from:7, to:8
+                api_to_idx = to_idx + 1
+                
+                logger.debug(
+                    f"Удаление треков из плейлиста {playlist_kind}: "
+                    f"индексы {from_idx}-{to_idx} (включительно), API to: {api_to_idx} (исключительно), "
+                    f"треков до: {tracks_count_before}, ожидается после: {expected_tracks_count_after}, revision: {revision}"
+                )
+                
                 # Формируем diff для удаления
-                diff = [{"op": "delete", "from": from_idx, "to": to_idx}]
+                # API использует 'to' как исключительный индекс (exclusive end)
+                diff = [{"op": "delete", "from": from_idx, "to": api_to_idx}]
                 diff_str = json.dumps(diff, ensure_ascii=False).replace(" ", "")
                 diff_encoded = urllib.parse.quote(diff_str, safe="")
                 url = f"{self.client.base_url}/users/{owner_id}/playlists/{playlist_kind}/change-relative?diff={diff_encoded}&revision={revision}"
-                result = self.client._request.post(url)
                 
-                if result:
+                # Копируем заголовки из клиента и добавляем необходимые
+                headers = self.client._request.headers.copy()
+                # Добавляем заголовок, который требуется API (как в curl запросе)
+                headers['x-yandex-music-without-invocation-info'] = '1'
+                
+                logger.debug(f"Запрос на удаление трека: URL={url}")
+                logger.debug(f"Diff (декодированный): {diff_str}")
+                logger.debug(f"Заголовки: {dict(headers)}")
+                
+                # Выполняем запрос на удаление через requests напрямую
+                # (как в set_playlist_cover) для контроля заголовков
+                try:
+                    response = requests.post(url, headers=headers, timeout=30)
+                    
+                    # Проверяем статус код ответа
+                    if response.status_code != 200:
+                        error_detail = response.text if response.text else "Нет деталей"
+                        logger.warning(
+                            f"Ошибка при удалении трека: статус {response.status_code}, "
+                            f"ответ: {error_detail[:200]}"
+                        )
+                        
+                        error_msg = error_detail.lower()
+                        # Если ошибка связана с revision и есть еще попытки, повторяем
+                        if ("wrong-revision" in error_msg or "revision" in error_msg) and attempt < max_retries - 1:
+                            logger.debug(f"Ошибка revision, повторяем попытку {attempt + 2}/{max_retries}")
+                            continue
+                        
+                        return False, f"Ошибка API: статус {response.status_code}. {error_detail[:200]}"
+                    
+                    # Запрос успешен (статус 200)
+                    logger.debug(f"Запрос на удаление выполнен успешно (статус {response.status_code})")
+                    
+                except requests.exceptions.RequestException as request_error:
+                    # Если запрос упал с исключением, это явная ошибка
+                    error_msg = str(request_error).lower()
+                    logger.warning(f"Ошибка при выполнении запроса удаления: {request_error}")
+                    
+                    # Если ошибка связана с revision и есть еще попытки, повторяем
+                    if ("wrong-revision" in error_msg or "revision" in error_msg) and attempt < max_retries - 1:
+                        logger.debug(f"Ошибка revision, повторяем попытку {attempt + 2}/{max_retries}")
+                        continue
+                    
+                    return False, f"Ошибка при выполнении запроса: {request_error}"
+                except Exception as request_error:
+                    # Другие исключения
+                    error_msg = str(request_error).lower()
+                    logger.warning(f"Неожиданная ошибка при выполнении запроса удаления: {request_error}")
+                    
+                    if ("wrong-revision" in error_msg or "revision" in error_msg) and attempt < max_retries - 1:
+                        logger.debug(f"Ошибка revision, повторяем попытку {attempt + 2}/{max_retries}")
+                        continue
+                    
+                    return False, f"Ошибка при выполнении запроса: {request_error}"
+                
+                # Получаем плейлист после удаления для проверки
+                # Небольшая задержка, чтобы API успел обработать изменения
+                import time
+                time.sleep(0.5)
+                
+                pl_after = self.client.users_playlists(playlist_kind, owner_id)
+                if pl_after is None:
+                    logger.warning("Не удалось получить плейлист после удаления для проверки")
+                    # Если не удалось получить плейлист, но запрос выполнен, считаем успешным
+                    # (возможно, это временная проблема с получением данных)
                     return True, None
-                else:
-                    return False, "Запрос выполнен, но ответ пустой."
+                
+                tracks_after = getattr(pl_after, "tracks", []) or []
+                tracks_count_after = len(tracks_after)
+                
+                logger.debug(
+                    f"Проверка удаления: треков до: {tracks_count_before}, "
+                    f"после: {tracks_count_after}, ожидалось: {expected_tracks_count_after}"
+                )
+                
+                # Проверяем, что количество треков изменилось как ожидалось
+                if tracks_count_after == tracks_count_before:
+                    # Количество не изменилось - удаление не сработало
+                    logger.warning(
+                        f"Удаление не сработало: количество треков не изменилось "
+                        f"({tracks_count_before} -> {tracks_count_after})"
+                    )
+                    if attempt < max_retries - 1:
+                        logger.debug(f"Повторяем попытку {attempt + 2}/{max_retries}")
+                        continue
+                    return False, (
+                        f"Удаление не выполнено: количество треков не изменилось "
+                        f"({tracks_count_before} треков до и после удаления). "
+                        f"Возможно, проблема с правами доступа или состоянием плейлиста."
+                    )
+                
+                # Проверяем, что количество изменилось хотя бы на 1 (может быть удалено меньше, чем ожидалось)
+                if tracks_count_after >= tracks_count_before:
+                    logger.warning(
+                        f"Количество треков не уменьшилось: "
+                        f"{tracks_count_before} -> {tracks_count_after}"
+                    )
+                    if attempt < max_retries - 1:
+                        continue
+                    return False, (
+                        f"Удаление не выполнено: количество треков не уменьшилось "
+                        f"({tracks_count_before} -> {tracks_count_after})"
+                    )
+                
+                # Удаление успешно - количество треков уменьшилось
+                actual_deleted_count = tracks_count_before - tracks_count_after
+                if actual_deleted_count != expected_deleted_count:
+                    logger.info(
+                        f"Удалено {actual_deleted_count} треков вместо ожидаемых {expected_deleted_count}. "
+                        f"Возможно, часть треков уже была удалена."
+                    )
+                
+                logger.debug(f"Успешно удалено {actual_deleted_count} треков из плейлиста")
+                return True, None
+                
             except Exception as e:
                 error_msg = str(e).lower()
-                logger.debug(f"Попытка {attempt + 1}/{max_retries}: ошибка удаления трека: {e}")
+                logger.exception(f"Попытка {attempt + 1}/{max_retries}: ошибка удаления трека: {e}")
                 
                 # Если ошибка связана с revision и есть еще попытки, повторяем
                 if ("wrong-revision" in error_msg or "revision" in error_msg) and attempt < max_retries - 1:
+                    logger.debug(f"Ошибка revision, повторяем попытку {attempt + 2}/{max_retries}")
                     continue
                 
                 # Другая ошибка или все попытки исчерпаны
