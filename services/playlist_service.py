@@ -46,12 +46,12 @@ class PlaylistService:
         Returns:
             Кортеж (успех, сообщение об ошибке)
         """
-        playlist = await asyncio.to_thread(self.db.get_playlist, playlist_id)
+        playlist = await self.db.get_playlist(playlist_id)
         if not playlist:
             return False, "Плейлист не найден."
         
         # Проверяем права доступа
-        if not await asyncio.to_thread(self.db.check_playlist_access, playlist_id, telegram_id, need_add=True):
+        if not await self.db.check_playlist_access(playlist_id, telegram_id, need_add=True):
             return False, "У вас нет прав на добавление треков в этот плейлист."
         
         # Получаем клиент и создаем сервис для работы с API
@@ -100,12 +100,12 @@ class PlaylistService:
         Returns:
             Кортеж (успех, сообщение об ошибке)
         """
-        playlist = await asyncio.to_thread(self.db.get_playlist, playlist_id)
+        playlist = await self.db.get_playlist(playlist_id)
         if not playlist:
             return False, "Плейлист не найден."
         
         # Проверяем права доступа
-        if not await asyncio.to_thread(self.db.check_playlist_access, playlist_id, telegram_id, need_edit=True):
+        if not await self.db.check_playlist_access(playlist_id, telegram_id, need_edit=True):
             return False, "У вас нет прав на удаление треков из этого плейлиста."
         
         # Получаем клиент и создаем сервис для работы с API
@@ -143,7 +143,7 @@ class PlaylistService:
         Returns:
             Объект плейлиста или None
         """
-        playlist = await asyncio.to_thread(self.db.get_playlist, playlist_id)
+        playlist = await self.db.get_playlist(playlist_id)
         if not playlist:
             return None
         
@@ -207,7 +207,7 @@ class PlaylistService:
         Returns:
             Ссылка для шаринга или None, если токен не найден
         """
-        playlist = await asyncio.to_thread(self.db.get_playlist, playlist_id)
+        playlist = await self.db.get_playlist(playlist_id)
         if not playlist:
             return None
         
@@ -228,7 +228,7 @@ class PlaylistService:
         Returns:
             Ссылка на плейлист в Яндекс.Музыке или None
         """
-        playlist = await asyncio.to_thread(self.db.get_playlist, playlist_id)
+        playlist = await self.db.get_playlist(playlist_id)
         if not playlist:
             return None
         
@@ -263,12 +263,12 @@ class PlaylistService:
         Returns:
             Кортеж (успех, сообщение об ошибке)
         """
-        playlist = await asyncio.to_thread(self.db.get_playlist, playlist_id)
+        playlist = await self.db.get_playlist(playlist_id)
         if not playlist:
             return False, "Плейлист не найден."
         
         # Проверяем права доступа (только создатель может менять обложку)
-        if not await asyncio.to_thread(self.db.is_playlist_creator, playlist_id, telegram_id):
+        if not await self.db.is_playlist_creator(playlist_id, telegram_id):
             return False, "Только создатель плейлиста может изменять обложку."
         
         # Получаем клиент и создаем сервис для работы с API
@@ -286,7 +286,7 @@ class PlaylistService:
         
         if ok:
             # Логируем действие
-            await asyncio.to_thread(self.db.log_action, telegram_id, "playlist_cover_set", playlist_id, None)
+            await self.db.log_action(telegram_id, "playlist_cover_set", playlist_id, None)
             return True, None
         
         return False, error or "Ошибка установки обложки"
@@ -308,12 +308,12 @@ class PlaylistService:
         Returns:
             Кортеж (успех, сообщение об ошибке)
         """
-        playlist = await asyncio.to_thread(self.db.get_playlist, playlist_id)
+        playlist = await self.db.get_playlist(playlist_id)
         if not playlist:
             return False, "Плейлист не найден."
         
         # Проверяем права доступа (только создатель может менять имя)
-        if not await asyncio.to_thread(self.db.is_playlist_creator, playlist_id, telegram_id):
+        if not await self.db.is_playlist_creator(playlist_id, telegram_id):
             return False, "Только создатель плейлиста может изменять его название."
         
         # Получаем клиент и создаем сервис для работы с API
@@ -331,10 +331,10 @@ class PlaylistService:
         
         if ok:
             # Обновляем название в БД
-            await asyncio.to_thread(self.db.update_playlist, playlist_id, title=new_name)
+            await self.db.update_playlist(playlist_id, title=new_name)
             # Логируем действие
-            await asyncio.to_thread(
-                self.db.log_action, telegram_id, "playlist_name_edited", playlist_id, 
+            await self.db.log_action(
+                telegram_id, "playlist_name_edited", playlist_id, 
                 f"new_title={new_name}"
             )
             return True, None
@@ -352,7 +352,7 @@ class PlaylistService:
         Returns:
             URL обложки или None, если обложка не найдена
         """
-        playlist = await asyncio.to_thread(self.db.get_playlist, playlist_id)
+        playlist = await self.db.get_playlist(playlist_id)
         if not playlist:
             return None
         
@@ -385,7 +385,7 @@ class PlaylistService:
         Returns:
             Кортеж (успех, сообщение об ошибке)
         """
-        playlist = await asyncio.to_thread(self.db.get_playlist, playlist_id)
+        playlist = await self.db.get_playlist(playlist_id)
         if not playlist:
             return False, "Плейлист не найден в БД"
         
@@ -416,7 +416,7 @@ class PlaylistService:
             updates["uuid"] = playlist_uuid
         
         if updates:
-            await asyncio.to_thread(self.db.update_playlist, playlist_id, **updates)
+            await self.db.update_playlist(playlist_id, **updates)
             logger.debug(f"Синхронизированы данные плейлиста {playlist_id}: {updates}")
         
         return True, None

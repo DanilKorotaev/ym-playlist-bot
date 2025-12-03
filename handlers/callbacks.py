@@ -73,13 +73,13 @@ class CallbackHandlers:
     
     async def _handle_select_playlist(self, query: CallbackQuery, playlist_id: int, telegram_id: int):
         """Обработка выбора плейлиста."""
-        playlist = await asyncio.to_thread(self.db.get_playlist, playlist_id)
+        playlist = await self.db.get_playlist(playlist_id)
         if not playlist:
             await edit_message(query, PLAYLIST_NOT_FOUND, reply_markup=None)
             return
         
         # Проверяем доступ
-        if not await asyncio.to_thread(self.db.check_playlist_access, playlist_id, telegram_id):
+        if not await self.db.check_playlist_access(playlist_id, telegram_id):
             await edit_message(query, NO_PLAYLIST_ACCESS, reply_markup=None)
             return
         
@@ -87,7 +87,7 @@ class CallbackHandlers:
         self.context_manager.set_active_playlist(telegram_id, playlist_id)
         
         title = playlist.get("title") or "Плейлист"
-        is_creator = await asyncio.to_thread(self.db.is_playlist_creator, playlist_id, telegram_id)
+        is_creator = await self.db.is_playlist_creator(playlist_id, telegram_id)
         status = "Создатель" if is_creator else "Участник"
         
         await query.message.edit_text(
@@ -98,17 +98,17 @@ class CallbackHandlers:
     
     async def _handle_delete_playlist(self, query: CallbackQuery, playlist_id: int, telegram_id: int):
         """Обработка удаления плейлиста."""
-        playlist = await asyncio.to_thread(self.db.get_playlist, playlist_id)
+        playlist = await self.db.get_playlist(playlist_id)
         if not playlist:
             await edit_message(query, PLAYLIST_NOT_FOUND)
             return
         
-        if not await asyncio.to_thread(self.db.is_playlist_creator, playlist_id, telegram_id):
+        if not await self.db.is_playlist_creator(playlist_id, telegram_id):
             await edit_message(query, ONLY_CREATOR_CAN_DELETE)
             return
         
         title = playlist.get("title") or "плейлист"
-        await asyncio.to_thread(self.db.delete_playlist, playlist_id)
+        await self.db.delete_playlist(playlist_id)
         
         # Удаляем из контекста
         self.context_manager.clear_active_playlist(telegram_id)
@@ -118,16 +118,16 @@ class CallbackHandlers:
             f"💡 Плейлист остался в Яндекс.Музыке, но бот больше не имеет к нему доступа.",
             reply_markup=None
         )
-        await asyncio.to_thread(self.db.log_action, telegram_id, "playlist_deleted", playlist_id, None)
+        await self.db.log_action(telegram_id, "playlist_deleted", playlist_id, None)
     
     async def _handle_edit_playlist(self, query: CallbackQuery, playlist_id: int, telegram_id: int):
         """Обработка открытия меню редактирования плейлиста."""
-        playlist = await asyncio.to_thread(self.db.get_playlist, playlist_id)
+        playlist = await self.db.get_playlist(playlist_id)
         if not playlist:
             await edit_message(query, PLAYLIST_NOT_FOUND)
             return
         
-        if not await asyncio.to_thread(self.db.is_playlist_creator, playlist_id, telegram_id):
+        if not await self.db.is_playlist_creator(playlist_id, telegram_id):
             await edit_message(query, ONLY_CREATOR_CAN_EDIT)
             return
         
@@ -143,12 +143,12 @@ class CallbackHandlers:
     
     async def _handle_toggle_insert_position(self, query: CallbackQuery, playlist_id: int, telegram_id: int):
         """Обработка переключения позиции вставки треков."""
-        playlist = await asyncio.to_thread(self.db.get_playlist, playlist_id)
+        playlist = await self.db.get_playlist(playlist_id)
         if not playlist:
             await edit_message(query, PLAYLIST_NOT_FOUND)
             return
         
-        if not await asyncio.to_thread(self.db.is_playlist_creator, playlist_id, telegram_id):
+        if not await self.db.is_playlist_creator(playlist_id, telegram_id):
             await edit_message(query, ONLY_CREATOR_CAN_EDIT)
             return
         
@@ -157,8 +157,8 @@ class CallbackHandlers:
         new_position = "start" if current_position == "end" else "end"
         
         # Обновляем в БД
-        await asyncio.to_thread(self.db.update_playlist, playlist_id, insert_position=new_position)
-        await asyncio.to_thread(self.db.log_action, telegram_id, "playlist_insert_position_changed", playlist_id, f"position={new_position}")
+        await self.db.update_playlist(playlist_id, insert_position=new_position)
+        await self.db.log_action(telegram_id, "playlist_insert_position_changed", playlist_id, f"position={new_position}")
         
         # Обновляем плейлист для получения актуальных данных
         playlist["insert_position"] = new_position

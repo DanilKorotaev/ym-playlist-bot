@@ -122,7 +122,7 @@ class YandexClientManager:
             return self._default_client
         
         # Проверяем, есть ли у пользователя свой токен
-        user_token = await asyncio.to_thread(self.db.get_user_yandex_token, telegram_id)
+        user_token = await self.db.get_user_yandex_token(telegram_id)
         if not user_token:
             await self._ensure_default_client()
             return self._default_client
@@ -152,7 +152,7 @@ class YandexClientManager:
             # Проверяем валидность токена, создавая временный клиент
             test_client = await self._init_client_with_retry(token)
             # Если успешно, сохраняем токен
-            await asyncio.to_thread(self.db.set_user_yandex_token, telegram_id, token)
+            await self.db.set_user_yandex_token(telegram_id, token)
             # Обновляем кэш клиентов
             if telegram_id in self._user_clients:
                 del self._user_clients[telegram_id]
@@ -169,7 +169,7 @@ class YandexClientManager:
         Получить клиент для работы с конкретным плейлистом.
         Определяет, какой аккаунт использовался при создании плейлиста.
         """
-        playlist = await asyncio.to_thread(self.db.get_playlist, playlist_id)
+        playlist = await self.db.get_playlist(playlist_id)
         if not playlist:
             await self._ensure_default_client()
             return self._default_client
@@ -180,7 +180,7 @@ class YandexClientManager:
             return self._default_client
         
         # Получаем аккаунт из БД по ID
-        account = await asyncio.to_thread(self.db.get_yandex_account_by_id, yandex_account_id)
+        account = await self.db.get_yandex_account_by_id(yandex_account_id)
         if not account:
             await self._ensure_default_client()
             return self._default_client
@@ -241,16 +241,15 @@ class YandexClientManager:
             
             # Получаем аккаунт из БД для связи
             if telegram_id:
-                yandex_account = await asyncio.to_thread(self.db.get_yandex_account_for_user, telegram_id)
+                yandex_account = await self.db.get_yandex_account_for_user(telegram_id)
             else:
-                yandex_account = await asyncio.to_thread(self.db.get_default_yandex_account)
+                yandex_account = await self.db.get_default_yandex_account()
             yandex_account_id = yandex_account["id"] if yandex_account else None
             
             # Сохраняем в БД
             # Для дефолтного аккаунта используем специальный telegram_id = 0
             creator_id = telegram_id if telegram_id else 0
-            playlist_id = await asyncio.to_thread(
-                self.db.create_playlist,
+            playlist_id = await self.db.create_playlist(
                 playlist_kind=playlist_kind,
                 owner_id=uid,
                 creator_telegram_id=creator_id,
@@ -264,12 +263,12 @@ class YandexClientManager:
             share_token = secrets.token_urlsafe(16)
             
             # Обновляем share_token и title через интерфейс
-            await asyncio.to_thread(self.db.update_playlist, playlist_id, title=title, share_token=share_token)
+            await self.db.update_playlist(playlist_id, title=title, share_token=share_token)
             
             # Логируем действие
             if telegram_id:
-                await asyncio.to_thread(
-                    self.db.log_action, telegram_id, "playlist_created", playlist_id, 
+                await self.db.log_action(
+                    telegram_id, "playlist_created", playlist_id, 
                     f"title={title}, kind={playlist_kind}"
                 )
             

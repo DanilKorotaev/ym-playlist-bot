@@ -67,6 +67,7 @@
 ## Технические улучшения
 
 - [x] [Миграция на aiogram 3.x (асинхронная версия)](tasks/task-tech-aiogram-migration.md) - см. [отчет о миграции](reports/aiogram_migration_summary.md)
+- [x] [Полная асинхронность БД (asyncpg/aiosqlite)](tasks/task-tech-async-db.md) ✅
 - [x] [Анализ требований к серверному железу и масштабируемости](research/server_requirements.md) ✅
 - [x] [Настройка CI/CD для автоматического развертывания](instructions/cicd_setup.md) ✅
 - [x] [Реализация режима технических работ (Maintenance Mode)](tasks/task-tech-maintenance-mode.md) ✅
