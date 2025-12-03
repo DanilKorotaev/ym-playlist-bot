@@ -268,5 +268,5 @@ docker exec ym_bot_postgres pg_dump -U postgres -t users -t playlists yandex_mus
 
 - [PostgreSQL Documentation: Backup and Restore](https://www.postgresql.org/docs/current/backup.html)
 - [Docker Documentation: Volumes](https://docs.docker.com/storage/volumes/)
-- Документация по бекапам: `docs/database_backup.md`
+- Документация по бекапам: `docs/instructions/database_backup.md`
 

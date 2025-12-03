@@ -558,20 +558,20 @@ ym-playlist-bot/
 └── README.md                    # Этот файл
 ```
 
-Подробную информацию об архитектуре см. в [docs/architecture.md](docs/architecture.md)
+Подробную информацию об архитектуре см. в [docs/architecture/architecture.md](docs/architecture/architecture.md)
 
 ## Резервное копирование и миграция базы данных
 
 Для обеспечения безопасности данных и возможности миграции между серверами создана документация и скрипты автоматизации:
 
-- **Бекапы БД**: [docs/database_backup.md](docs/database_backup.md) - стратегия и процесс создания резервных копий
-- **Миграция БД**: [docs/database_migration.md](docs/database_migration.md) - миграция базы данных между серверами
+- **Бекапы БД**: [docs/instructions/database_backup.md](docs/instructions/database_backup.md) - стратегия и процесс создания резервных копий
+- **Миграция БД**: [docs/instructions/database_migration.md](docs/instructions/database_migration.md) - миграция базы данных между серверами
 
 ## Автоматическое развертывание (CI/CD)
 
 Для автоматизации процесса развертывания бота на сервере создана документация по настройке CI/CD:
 
-- **CI/CD Setup**: [docs/cicd_setup.md](docs/cicd_setup.md) - настройка автоматического развертывания с использованием GitHub Actions
+- **CI/CD Setup**: [docs/instructions/cicd_setup.md](docs/instructions/cicd_setup.md) - настройка автоматического развертывания с использованием GitHub Actions
   - Настройка GitHub Actions workflow
   - Безопасное хранение секретов
   - Автоматическое и ручное развертывание
@@ -650,7 +650,7 @@ ym-playlist-bot/
 ### Шаринг плейлистов
 После создания плейлиста бот отправит вам ссылку для шаринга. Отправьте её друзьям, чтобы они могли добавлять треки в ваш плейлист.
 
-Подробную документацию по командам см. в [docs/commands.md](docs/commands.md)
+Подробную документацию по командам см. в [docs/instructions/commands.md](docs/instructions/commands.md)
 
 ## Разработка
 
@@ -664,9 +664,9 @@ ym-playlist-bot/
 
 Проект успешно мигрирован на `aiogram 3.x` (асинхронная версия). Подробности:
 
-- [Краткое описание миграции](docs/aiogram_migration_summary.md) - основные изменения и примеры кода
-- [План миграции](docs/aiogram_migration_plan.md) - детальный план и статус выполнения
-- [Архитектура проекта](docs/architecture.md) - описание текущей архитектуры
+- [Краткое описание миграции](docs/reports/aiogram_migration_summary.md) - основные изменения и примеры кода
+- [План миграции](docs/plans/aiogram_migration_plan.md) - детальный план и статус выполнения
+- [Архитектура проекта](docs/architecture/architecture.md) - описание текущей архитектуры
 
 ## Лицензия
 

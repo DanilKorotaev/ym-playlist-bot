@@ -328,6 +328,6 @@ docker exec ym_bot_postgres dropdb -U postgres test_restore
 ## Дополнительные ресурсы
 
 - [PostgreSQL Documentation: Backup and Restore](https://www.postgresql.org/docs/current/backup.html)
-- Документация по миграции: `docs/database_migration.md`
+- Документация по миграции: `docs/instructions/database_migration.md`
 - Скрипты автоматизации: `scripts/backup_db.sh`, `scripts/restore_db.sh`
 

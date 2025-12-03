@@ -38,11 +38,11 @@
 
 **Всегда опирайся на:**
 - `/agent/system_prompt.md` — этот файл
-- `/docs/vision.md` — идеология проекта
-- `/docs/features.md` — функциональность
-- `/docs/architecture.md` — структура проекта
+- `/docs/architecture/vision.md` — идеология проекта
+- `/docs/architecture/features.md` — функциональность
+- `/docs/architecture/architecture.md` — структура проекта
 - `/docs/todo.md` — список задач и хотелок
-- `/docs/commands.md` — описание команд бота
+- `/docs/instructions/commands.md` — описание команд бота
 
 ## Контекст проекта
 

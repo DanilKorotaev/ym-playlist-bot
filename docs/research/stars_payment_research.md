@@ -693,9 +693,9 @@ dp.add_handler(CommandHandler("buy_limit", command_handlers.buy_limit))
 - [ ] Протестировать проверку лимитов
 
 ### Этап 6: Документация
-- [ ] Обновить `docs/features.md`
-- [ ] Обновить `docs/commands.md`
-- [ ] Обновить `docs/architecture.md`
+- [ ] Обновить `docs/architecture/features.md`
+- [ ] Обновить `docs/instructions/commands.md`
+- [ ] Обновить `docs/architecture/architecture.md`
 - [ ] Добавить инструкции по настройке
 
 ---
