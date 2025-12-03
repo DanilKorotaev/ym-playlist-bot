@@ -18,6 +18,7 @@ from aiogram.types import Message, CallbackQuery, PreCheckoutQuery, SuccessfulPa
 from database import create_database
 from yandex_client_manager import YandexClientManager
 from utils.context import UserContextManager
+from utils.maintenance_middleware import MaintenanceMiddleware
 from handlers.commands import CommandHandlers
 from handlers.callbacks import CallbackHandlers
 from handlers.messages import MessageHandlers
@@ -35,6 +36,10 @@ load_dotenv()
 # === Конфигурация ===
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 YANDEX_TOKEN = os.getenv("YANDEX_TOKEN")
+
+# Список ID администраторов (для режима техработ)
+ADMIN_IDS_STR = os.getenv("ADMIN_IDS", "")
+ADMIN_IDS = [int(admin_id.strip()) for admin_id in ADMIN_IDS_STR.split(",") if admin_id.strip()] if ADMIN_IDS_STR else []
 
 # Проверка обязательных переменных
 if not TELEGRAM_TOKEN:
@@ -129,6 +134,10 @@ async def main():
         bot_instance = Bot(token=TELEGRAM_TOKEN)
         storage = MemoryStorage()
         dp_instance = Dispatcher(storage=storage)
+        
+        # Регистрируем middleware для режима техработ
+        maintenance_middleware = MaintenanceMiddleware(admin_ids=ADMIN_IDS)
+        dp_instance.update.middleware(maintenance_middleware)
         
         # Регистрируем обработчик ошибок
         # В aiogram 3.x обработчик ошибок принимает update и exception

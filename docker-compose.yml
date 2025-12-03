@@ -53,6 +53,8 @@ services:
       DB_USER: ${POSTGRES_USER:-postgres}
       DB_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      MAINTENANCE_MODE: ${MAINTENANCE_MODE:-false}
+      ADMIN_IDS: ${ADMIN_IDS:-}
     depends_on:
       postgres:
         condition: service_healthy
