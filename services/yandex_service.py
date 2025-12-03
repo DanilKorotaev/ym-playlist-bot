@@ -9,7 +9,7 @@ import urllib.parse
 import requests
 from typing import List, Optional, Tuple, Any
 from yandex_music import Client
-from yandex_music.exceptions import YandexMusicError
+from yandex_music.exceptions import YandexMusicError, TimedOutError
 
 logger = logging.getLogger(__name__)
 
@@ -414,7 +414,7 @@ class YandexService:
             max_retries: Максимальное количество попыток при ошибке
             
         Returns:
-            Кортеж (успех, сообщение об ошибке)
+            Tuple[bool, Optional[str]]: (успех, понятное сообщение об ошибке)
         """
         for attempt in range(max_retries):
             try:
@@ -431,6 +431,51 @@ class YandexService:
                     return True, None
                 else:
                     return False, "Запрос выполнен, но ответ пустой."
+            except YandexMusicError as e:
+                error_message = str(e).lower()
+                error_str = str(e)
+                logger.debug(f"Попытка {attempt + 1}/{max_retries}: ошибка изменения имени плейлиста: {e}")
+                
+                # Если ошибка связана с revision и есть еще попытки, повторяем
+                if ("wrong-revision" in error_message or "revision" in error_message) and attempt < max_retries - 1:
+                    continue
+                
+                # Проверяем на ошибки модерации
+                if any(keyword in error_message for keyword in ["moderation", "модерац", "name", "title", "invalid", "некорректн"]):
+                    logger.warning(
+                        f"Ошибка модерации названия плейлиста: title='{new_name}', "
+                        f"playlist_kind={playlist_kind}, owner_id={owner_id}, error={error_str}"
+                    )
+                    return False, "Название плейлиста не прошло модерацию. Пожалуйста, используйте другое название."
+                
+                # Проверяем на ошибки авторизации (401)
+                if "unauthorized" in error_message or "401" in error_str or "недействителен" in error_message:
+                    logger.warning(f"Ошибка авторизации при изменении названия: playlist_kind={playlist_kind}, error={error_str}")
+                    return False, "Токен Яндекс.Музыки недействителен. Используйте /set_token для обновления."
+                
+                # Проверяем на ошибки доступа (403)
+                if "forbidden" in error_message or "403" in error_str or "недостаточно прав" in error_message:
+                    logger.warning(f"Ошибка доступа при изменении названия: playlist_kind={playlist_kind}, error={error_str}")
+                    return False, "Недостаточно прав для изменения названия или название не прошло модерацию."
+                
+                # Проверяем на ошибки некорректного запроса (400)
+                if "bad request" in error_message or "400" in error_str:
+                    logger.warning(f"Некорректный запрос при изменении названия: playlist_kind={playlist_kind}, error={error_str}")
+                    return False, "Некорректное название плейлиста."
+                
+                # Другие ошибки API
+                logger.error(f"Ошибка API при изменении названия: playlist_kind={playlist_kind}, error={error_str}")
+                return False, "Ошибка при изменении названия плейлиста. Попробуйте еще раз."
+            except TimedOutError as e:
+                logger.warning(f"Таймаут при изменении названия плейлиста: {e}")
+                if attempt < max_retries - 1:
+                    continue
+                return False, "Превышено время ожидания ответа. Попробуйте еще раз."
+            except (ConnectionError, OSError) as e:
+                logger.warning(f"Сетевая ошибка при изменении названия: {e}")
+                if attempt < max_retries - 1:
+                    continue
+                return False, "Проблема с подключением к Яндекс.Музыке. Попробуйте позже."
             except Exception as e:
                 error_msg = str(e).lower()
                 logger.debug(f"Попытка {attempt + 1}/{max_retries}: ошибка изменения имени плейлиста: {e}")
@@ -440,7 +485,8 @@ class YandexService:
                     continue
                 
                 # Другая ошибка или все попытки исчерпаны
-                return False, f"Ошибка изменения имени: {e}"
+                logger.exception(f"Неожиданная ошибка при изменении названия: {e}")
+                return False, "Ошибка при изменении названия плейлиста. Попробуйте еще раз."
         
         return False, "Не удалось изменить имя плейлиста после нескольких попыток"
     

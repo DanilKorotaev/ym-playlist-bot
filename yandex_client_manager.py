@@ -4,7 +4,7 @@
 """
 import logging
 import asyncio
-from typing import Optional, Dict
+from typing import Optional, Dict, Tuple
 from yandex_music import Client
 from yandex_music.exceptions import YandexMusicError, TimedOutError
 from database import DatabaseInterface
@@ -194,10 +194,17 @@ class YandexClientManager:
         await self._ensure_default_client()
         return self._default_client
     
-    async def create_playlist(self, telegram_id: Optional[int], title: str) -> Optional[Dict]:
+    async def create_playlist(self, telegram_id: Optional[int], title: str) -> Tuple[Optional[Dict], Optional[str]]:
         """
         Создать новый плейлист в Яндекс.Музыке.
-        Возвращает информацию о созданном плейлисте или None при ошибке.
+        
+        Args:
+            telegram_id: ID пользователя Telegram (опционально)
+            title: Название плейлиста
+            
+        Returns:
+            Tuple[Optional[Dict], Optional[str]]: (результат, сообщение об ошибке)
+            Если результат None, то error содержит понятное сообщение для пользователя
         """
         client = await self.get_client(telegram_id)
         
@@ -230,7 +237,7 @@ class YandexClientManager:
             
             uid, playlist_kind, playlist_uuid = await asyncio.to_thread(_get_uid_and_create_playlist, client, title)
             if uid is None:
-                return None
+                return None, "Не удалось создать плейлист. Попробуйте еще раз."
             
             # Получаем аккаунт из БД для связи
             if telegram_id:
@@ -272,8 +279,44 @@ class YandexClientManager:
                 "owner_id": uid,
                 "title": title,
                 "share_token": share_token
-            }
+            }, None
+        except TimedOutError as e:
+            logger.warning(f"Таймаут при создании плейлиста: {e}")
+            return None, "Превышено время ожидания ответа. Попробуйте еще раз."
+        except YandexMusicError as e:
+            error_message = str(e).lower()
+            error_str = str(e)
+            
+            # Проверяем на ошибки модерации
+            if any(keyword in error_message for keyword in ["moderation", "модерац", "name", "title", "invalid", "некорректн"]):
+                logger.warning(
+                    f"Ошибка модерации названия плейлиста: title='{title}', "
+                    f"user_id={telegram_id}, error={error_str}"
+                )
+                return None, "Название плейлиста не прошло модерацию. Пожалуйста, используйте другое название."
+            
+            # Проверяем на ошибки авторизации (401)
+            if "unauthorized" in error_message or "401" in error_str or "недействителен" in error_message:
+                logger.warning(f"Ошибка авторизации при создании плейлиста: user_id={telegram_id}, error={error_str}")
+                return None, "Токен Яндекс.Музыки недействителен. Используйте /set_token для обновления."
+            
+            # Проверяем на ошибки доступа (403)
+            if "forbidden" in error_message or "403" in error_str or "недостаточно прав" in error_message:
+                logger.warning(f"Ошибка доступа при создании плейлиста: user_id={telegram_id}, error={error_str}")
+                return None, "Недостаточно прав для создания плейлиста или название не прошло модерацию."
+            
+            # Проверяем на ошибки некорректного запроса (400)
+            if "bad request" in error_message or "400" in error_str:
+                logger.warning(f"Некорректный запрос при создании плейлиста: user_id={telegram_id}, error={error_str}")
+                return None, "Некорректный запрос. Проверьте название плейлиста."
+            
+            # Другие ошибки API
+            logger.error(f"Ошибка API при создании плейлиста: user_id={telegram_id}, error={error_str}")
+            return None, "Ошибка при создании плейлиста. Попробуйте еще раз."
+        except (ConnectionError, OSError) as e:
+            logger.warning(f"Сетевая ошибка при создании плейлиста: {e}")
+            return None, "Проблема с подключением к Яндекс.Музыке. Попробуйте позже."
         except Exception as e:
-            logger.exception(f"Ошибка при создании плейлиста: {e}")
-            return None
+            logger.exception(f"Неожиданная ошибка при создании плейлиста: {e}")
+            return None, "Ошибка при создании плейлиста. Попробуйте еще раз."
 

@@ -12,6 +12,7 @@ from aiogram.fsm.context import FSMContext
 from database import DatabaseInterface
 from yandex_client_manager import YandexClientManager
 from utils.context import UserContextManager
+from utils.validation import validate_playlist_name
 from utils.message_helpers import (
     send_message,
     NO_ACTIVE_PLAYLIST,
@@ -159,18 +160,12 @@ class CommandHandlers:
             await self.cancel_operation(message, state)
             return
         
-        # Валидация
-        if not title:
+        # Предварительная валидация названия
+        is_valid, validation_error = validate_playlist_name(title)
+        if not is_valid:
             await message.answer(
-                "❌ Название не может быть пустым. Попробуйте еще раз:",
-                reply_markup=get_cancel_keyboard()
-            )
-            return
-        
-        if len(title) > 100:
-            await message.answer(
-                "❌ Название слишком длинное (максимум 100 символов).\n\n"
-                "Введите более короткое название:",
+                f"❌ {validation_error}\n\n"
+                f"💡 Попробуйте еще раз:",
                 reply_markup=get_cancel_keyboard()
             )
             return
@@ -197,7 +192,7 @@ class CommandHandlers:
         
         # Создаем плейлист
         await send_message(message, CREATING_PLAYLIST)
-        result = await self.client_manager.create_playlist(telegram_id, title)
+        result, error = await self.client_manager.create_playlist(telegram_id, title)
         
         if result:
             playlist_id = result["id"]
@@ -213,17 +208,27 @@ class CommandHandlers:
                 reply_markup=get_main_menu_keyboard()
             )
             await asyncio.to_thread(self.db.log_action, telegram_id, "playlist_created", playlist_id, f"title={title}")
+            await state.clear()
         else:
+            error_message = error or "Не удалось создать плейлист."
+            
+            # Проверяем на ошибку модерации - не очищаем state, предлагаем ввести другое название
+            if "модерац" in error_message.lower() or "moderation" in error_message.lower():
+                await message.answer(
+                    f"❌ {error_message}\n\n"
+                    f"💡 Попробуйте ввести другое название:",
+                    reply_markup=get_cancel_keyboard()
+                )
+                # Не очищаем state - остаемся в состоянии ожидания названия
+                return
+            
+            # Для других ошибок - показываем сообщение и очищаем state
             await message.answer(
-                "❌ Не удалось создать плейлист.\n\n"
-                "Возможные причины:\n"
-                "• Не установлен токен Яндекс.Музыки\n"
-                "• Токен недействителен\n\n"
-                "Используйте /set_token для установки своего токена.",
+                f"❌ {error_message}\n\n"
+                f"💡 Если проблема с токеном, используйте /set_token для установки своего токена.",
                 reply_markup=get_main_menu_keyboard()
             )
-        
-        await state.clear()
+            await state.clear()
     
     async def my_playlists(self, message: Message):
         """Команда /my_playlists."""
@@ -563,18 +568,12 @@ class CommandHandlers:
             await self.cancel_operation(message, state)
             return
         
-        # Валидация
-        if not new_title:
+        # Предварительная валидация названия
+        is_valid, validation_error = validate_playlist_name(new_title)
+        if not is_valid:
             await message.answer(
-                "❌ Название не может быть пустым. Попробуйте еще раз:",
-                reply_markup=get_cancel_keyboard()
-            )
-            return
-        
-        if len(new_title) > 100:
-            await message.answer(
-                "❌ Название слишком длинное (максимум 100 символов).\n\n"
-                "Введите более короткое название:",
+                f"❌ {validation_error}\n\n"
+                f"💡 Попробуйте еще раз:",
                 reply_markup=get_cancel_keyboard()
             )
             return
@@ -596,15 +595,26 @@ class CommandHandlers:
                 f"✅ Название плейлиста изменено на «{new_title}»",
                 reply_markup=get_main_menu_keyboard()
             )
+            await state.clear()
         else:
+            error_message = error or "Не удалось изменить название плейлиста."
+            
+            # Проверяем на ошибку модерации - возвращаем в состояние редактирования
+            if "модерац" in error_message.lower() or "moderation" in error_message.lower():
+                await message.answer(
+                    f"❌ {error_message}\n\n"
+                    f"💡 Попробуйте ввести другое название:",
+                    reply_markup=get_cancel_keyboard()
+                )
+                # Не очищаем state - остаемся в состоянии ожидания нового названия
+                return
+            
+            # Для других ошибок - показываем сообщение и очищаем state
             await message.answer(
-                f"❌ Не удалось изменить название плейлиста.\n\n"
-                f"{error or 'Неизвестная ошибка'}",
+                f"❌ {error_message}",
                 reply_markup=get_main_menu_keyboard()
             )
-        
-        # Очищаем состояние
-        await state.clear()
+            await state.clear()
     
     async def delete_playlist_cmd(self, message: Message):
         """Команда /delete_playlist."""
