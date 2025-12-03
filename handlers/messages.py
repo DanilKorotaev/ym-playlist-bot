@@ -62,7 +62,7 @@ class MessageHandlers:
         """Обработка нажатий на кнопки меню."""
         text = message.text.strip()
         telegram_id = message.from_user.id
-        await asyncio.to_thread(self.db.ensure_user, telegram_id, message.from_user.username)
+        await self.db.ensure_user(telegram_id, message.from_user.username)
         
         # Проверяем, не находится ли пользователь в состоянии FSM
         # Если да, то не обрабатываем кнопки меню (кроме "❌ Отмена", которая обрабатывается FSM fallback)
@@ -96,7 +96,7 @@ class MessageHandlers:
     async def add_command(self, message: Message, state: FSMContext):
         """Обработка ссылок на треки/альбомы/плейлисты."""
         telegram_id = message.from_user.id
-        await asyncio.to_thread(self.db.ensure_user, telegram_id, message.from_user.username)
+        await self.db.ensure_user(telegram_id, message.from_user.username)
         
         # Проверяем, не находится ли пользователь в состоянии FSM
         # Если да, то не обрабатываем сообщение здесь (FSM должен обработать)
@@ -121,8 +121,8 @@ class MessageHandlers:
             return
         
         # Проверяем доступ
-        if not await asyncio.to_thread(self.db.check_playlist_access, playlist_id, telegram_id, need_add=True):
-            playlist = await asyncio.to_thread(self.db.get_playlist, playlist_id)
+        if not await self.db.check_playlist_access(playlist_id, telegram_id, need_add=True):
+            playlist = await self.db.get_playlist(playlist_id)
             title = playlist.get("title") or "плейлист" if playlist else "плейлист"
             await send_message(
                 message,
@@ -132,7 +132,7 @@ class MessageHandlers:
             return
         
         # Показываем информацию об активном плейлисте
-        playlist = await asyncio.to_thread(self.db.get_playlist, playlist_id)
+        playlist = await self.db.get_playlist(playlist_id)
         playlist_title = playlist.get("title") or "плейлист" if playlist else "плейлист"
         
         client = await self.client_manager.get_client(telegram_id)
@@ -253,9 +253,9 @@ class MessageHandlers:
         # Ссылка на шаринг плейлиста
         share_token = parse_share_link(text)
         if share_token:
-            playlist = await asyncio.to_thread(self.db.get_playlist_by_share_token, share_token)
+            playlist = await self.db.get_playlist_by_share_token(share_token)
             if playlist:
-                await asyncio.to_thread(self.db.grant_playlist_access, playlist["id"], telegram_id, can_add=True)
+                await self.db.grant_playlist_access(playlist["id"], telegram_id, can_add=True)
                 # Устанавливаем как активный
                 self.context_manager.set_active_playlist(telegram_id, playlist["id"])
                 await message.answer(
@@ -263,7 +263,7 @@ class MessageHandlers:
                     f"Теперь вы можете добавлять треки в этот плейлист.",
                     reply_markup=get_main_menu_keyboard()
                 )
-                await asyncio.to_thread(self.db.log_action, telegram_id, "playlist_shared_access", playlist["id"], f"via_token={share_token}")
+                await self.db.log_action(telegram_id, "playlist_shared_access", playlist["id"], f"via_token={share_token}")
                 return
         
         await message.answer(

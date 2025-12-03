@@ -34,7 +34,7 @@ class UserContextManager:
             return self._contexts[telegram_id]["current_playlist_id"]
         
         # Пытаемся взять первый доступный плейлист
-        playlists = await asyncio.to_thread(self.db.get_user_playlists, telegram_id)
+        playlists = await self.db.get_user_playlists(telegram_id)
         if playlists:
             playlist_id = playlists[0]["id"]
             if telegram_id not in self._contexts:
@@ -77,7 +77,7 @@ class UserContextManager:
         """
         if telegram_id in self._contexts and "current_playlist_id" in self._contexts[telegram_id]:
             playlist_id = self._contexts[telegram_id]["current_playlist_id"]
-            playlist = await asyncio.to_thread(self.db.get_playlist, playlist_id)
+            playlist = await self.db.get_playlist(playlist_id)
             if playlist:
                 title = playlist.get("title") or "Без названия"
                 return f"🎵 Активный плейлист: «{title}»"

@@ -70,17 +70,17 @@ class CommandHandlers:
         """Команда /start (обрабатывает и с аргументами, и без)."""
         telegram_id = message.from_user.id
         username = message.from_user.username
-        await asyncio.to_thread(self.db.ensure_user, telegram_id, username)
+        await self.db.ensure_user(telegram_id, username)
         
         # Извлекаем аргументы из команды (для шаринга плейлистов)
         command_args = message.text.split(maxsplit=1)[1] if len(message.text.split()) > 1 else None
         if command_args:
             share_token = command_args.split()[0] if command_args else None
             if share_token:
-                playlist = await asyncio.to_thread(self.db.get_playlist_by_share_token, share_token)
+                playlist = await self.db.get_playlist_by_share_token(share_token)
                 if playlist:
                     # Предоставляем доступ к плейлисту
-                    await asyncio.to_thread(self.db.grant_playlist_access, playlist["id"], telegram_id, can_add=True)
+                    await self.db.grant_playlist_access(playlist["id"], telegram_id, can_add=True)
                     # Устанавливаем как активный
                     self.context_manager.set_active_playlist(telegram_id, playlist["id"])
                     
@@ -89,7 +89,7 @@ class CommandHandlers:
                         f"Теперь вы можете добавлять треки в этот плейлист, отправляя ссылки на треки, альбомы или плейлисты.",
                         reply_markup=get_main_menu_keyboard()
                     )
-                    await asyncio.to_thread(self.db.log_action, telegram_id, "playlist_shared_access", playlist["id"], f"via_token={share_token}")
+                    await self.db.log_action(telegram_id, "playlist_shared_access", playlist["id"], f"via_token={share_token}")
                     return
         
         # Показываем информацию об активном плейлисте, если есть
@@ -113,12 +113,12 @@ class CommandHandlers:
             help_text,
             reply_markup=get_main_menu_keyboard()
         )
-        await asyncio.to_thread(self.db.log_action, telegram_id, "command_start", None, None)
+        await self.db.log_action(telegram_id, "command_start", None, None)
     
     async def main_menu(self, message: Message):
         """Главное меню."""
         telegram_id = message.from_user.id
-        await asyncio.to_thread(self.db.ensure_user, telegram_id, message.from_user.username)
+        await self.db.ensure_user(telegram_id, message.from_user.username)
         
         active_info = await self.context_manager.get_active_playlist_info(telegram_id)
         text = "🏠 Главное меню\n\n"
@@ -139,7 +139,7 @@ class CommandHandlers:
     async def create_playlist_start(self, message: Message, state: FSMContext):
         """Начало создания плейлиста (FSM)."""
         telegram_id = message.from_user.id
-        await asyncio.to_thread(self.db.ensure_user, telegram_id, message.from_user.username)
+        await self.db.ensure_user(telegram_id, message.from_user.username)
         
         # FSM диалог
         await message.answer(
@@ -171,8 +171,8 @@ class CommandHandlers:
             return
         
         # Проверяем лимит плейлистов (с учетом подписки)
-        user_limit = await asyncio.to_thread(self.db.get_user_playlist_limit, telegram_id)
-        current_count = await asyncio.to_thread(self.db.count_user_playlists, telegram_id)
+        user_limit = await self.db.get_user_playlist_limit(telegram_id)
+        current_count = await self.db.count_user_playlists(telegram_id)
         
         # Проверка лимита
         if user_limit == -1:
@@ -207,7 +207,7 @@ class CommandHandlers:
                 f"Отправьте эту ссылку другим пользователям, чтобы они могли добавлять треки в ваш плейлист.",
                 reply_markup=get_main_menu_keyboard()
             )
-            await asyncio.to_thread(self.db.log_action, telegram_id, "playlist_created", playlist_id, f"title={title}")
+            await self.db.log_action(telegram_id, "playlist_created", playlist_id, f"title={title}")
             await state.clear()
         else:
             error_message = error or "Не удалось создать плейлист."
@@ -233,13 +233,13 @@ class CommandHandlers:
     async def my_playlists(self, message: Message):
         """Команда /my_playlists."""
         telegram_id = message.from_user.id
-        await asyncio.to_thread(self.db.ensure_user, telegram_id, message.from_user.username)
+        await self.db.ensure_user(telegram_id, message.from_user.username)
         
-        playlists = await asyncio.to_thread(self.db.get_user_playlists, telegram_id, only_created=True)
+        playlists = await self.db.get_user_playlists(telegram_id, only_created=True)
         
         # Получаем информацию о лимите (с учетом подписки)
         current_count = len(playlists)
-        user_limit = await asyncio.to_thread(self.db.get_user_playlist_limit, telegram_id)
+        user_limit = await self.db.get_user_playlist_limit(telegram_id)
         limit_text = "∞" if user_limit == -1 else str(user_limit)
         limit_info = f"📊 {current_count}/{limit_text} плейлистов"
         
@@ -282,9 +282,9 @@ class CommandHandlers:
     async def shared_playlists(self, message: Message):
         """Команда /shared_playlists."""
         telegram_id = message.from_user.id
-        await asyncio.to_thread(self.db.ensure_user, telegram_id, message.from_user.username)
+        await self.db.ensure_user(telegram_id, message.from_user.username)
         
-        playlists = await asyncio.to_thread(self.db.get_shared_playlists, telegram_id)
+        playlists = await self.db.get_shared_playlists(telegram_id)
         
         if not playlists:
             await message.answer(
@@ -324,7 +324,7 @@ class CommandHandlers:
     async def playlist_info(self, message: Message):
         """Команда /playlist_info."""
         telegram_id = message.from_user.id
-        await asyncio.to_thread(self.db.ensure_user, telegram_id, message.from_user.username)
+        await self.db.ensure_user(telegram_id, message.from_user.username)
         
         playlist_id = await self.context_manager.get_active_playlist_id(telegram_id)
         
@@ -332,13 +332,13 @@ class CommandHandlers:
             await send_message(message, NO_ACTIVE_PLAYLIST_SELECT, use_main_menu=True)
             return
         
-        playlist = await asyncio.to_thread(self.db.get_playlist, playlist_id)
+        playlist = await self.db.get_playlist(playlist_id)
         if not playlist:
             await send_message(message, PLAYLIST_NOT_FOUND, use_main_menu=True)
             return
         
         # Проверяем доступ
-        if not await asyncio.to_thread(self.db.check_playlist_access, playlist_id, telegram_id):
+        if not await self.db.check_playlist_access(playlist_id, telegram_id):
             await send_message(message, NO_PLAYLIST_ACCESS, use_main_menu=True)
             return
         
@@ -346,10 +346,10 @@ class CommandHandlers:
         sync_ok, sync_error = await self.playlist_service.sync_playlist_from_api(playlist_id, telegram_id)
         if sync_ok:
             # Обновляем объект плейлиста из БД после синхронизации
-            playlist = await asyncio.to_thread(self.db.get_playlist, playlist_id)
+            playlist = await self.db.get_playlist(playlist_id)
         
         title = playlist.get("title") or "Без названия"
-        is_creator = await asyncio.to_thread(self.db.is_playlist_creator, playlist_id, telegram_id)
+        is_creator = await self.db.is_playlist_creator(playlist_id, telegram_id)
         bot_info = await message.bot.get_me()
         share_link = await self.playlist_service.get_share_link(playlist_id, bot_info.username)
         yandex_link = await self.playlist_service.get_yandex_link(playlist_id)
@@ -385,7 +385,7 @@ class CommandHandlers:
             keyboard.append([InlineKeyboardButton(text="✏️ Редактировать", callback_data=f"edit_playlist_{playlist_id}")])
         
         # Кнопка удаления трека (для всех, кто имеет права редактирования, и если есть треки)
-        can_edit = await asyncio.to_thread(self.db.check_playlist_access, playlist_id, telegram_id, need_edit=True)
+        can_edit = await self.db.check_playlist_access(playlist_id, telegram_id, need_edit=True)
         if can_edit and tracks_count is not None and tracks_count > 0:
             keyboard.append([InlineKeyboardButton(text="🗑️ Удалить трек", callback_data=f"delete_track_{playlist_id}")])
         
@@ -399,7 +399,7 @@ class CommandHandlers:
     async def show_list(self, message: Message):
         """Команда /list."""
         telegram_id = message.from_user.id
-        await asyncio.to_thread(self.db.ensure_user, telegram_id, message.from_user.username)
+        await self.db.ensure_user(telegram_id, message.from_user.username)
         
         playlist_id = await self.context_manager.get_active_playlist_id(telegram_id)
         
@@ -407,13 +407,13 @@ class CommandHandlers:
             await send_message(message, NO_ACTIVE_PLAYLIST_SELECT, use_main_menu=True)
             return
         
-        playlist = await asyncio.to_thread(self.db.get_playlist, playlist_id)
+        playlist = await self.db.get_playlist(playlist_id)
         if not playlist:
             await send_message(message, PLAYLIST_NOT_FOUND, use_main_menu=True)
             return
         
         # Проверяем доступ
-        if not await asyncio.to_thread(self.db.check_playlist_access, playlist_id, telegram_id):
+        if not await self.db.check_playlist_access(playlist_id, telegram_id):
             await send_message(message, NO_PLAYLIST_ACCESS, use_main_menu=True)
             return
         
@@ -453,7 +453,7 @@ class CommandHandlers:
     async def set_token_start(self, message: Message, state: FSMContext):
         """Начало установки токена (FSM)."""
         telegram_id = message.from_user.id
-        await asyncio.to_thread(self.db.ensure_user, telegram_id, message.from_user.username)
+        await self.db.ensure_user(telegram_id, message.from_user.username)
         
         # FSM диалог
         await message.answer(
@@ -490,7 +490,7 @@ class CommandHandlers:
                 "Теперь ваши плейлисты будут создаваться в вашем аккаунте Яндекс.Музыки.",
                 reply_markup=get_main_menu_keyboard()
             )
-            await asyncio.to_thread(self.db.log_action, telegram_id, "token_set", None, None)
+            await self.db.log_action(telegram_id, "token_set", None, None)
         else:
             await message.answer(
                 "❌ Не удалось установить токен.\n\n"
@@ -619,7 +619,7 @@ class CommandHandlers:
     async def delete_playlist_cmd(self, message: Message):
         """Команда /delete_playlist."""
         telegram_id = message.from_user.id
-        await asyncio.to_thread(self.db.ensure_user, telegram_id, message.from_user.username)
+        await self.db.ensure_user(telegram_id, message.from_user.username)
         
         # Получаем активный плейлист
         playlist_id = await self.context_manager.get_active_playlist_id(telegram_id)
@@ -629,21 +629,21 @@ class CommandHandlers:
             return
         
         # Проверяем, что пользователь - создатель
-        if not await asyncio.to_thread(self.db.is_playlist_creator, playlist_id, telegram_id):
+        if not await self.db.is_playlist_creator(playlist_id, telegram_id):
             await message.answer("Только создатель плейлиста может удалять его.")
             return
         
-        playlist = await asyncio.to_thread(self.db.get_playlist, playlist_id)
+        playlist = await self.db.get_playlist(playlist_id)
         title = playlist.get("title") or "плейлист" if playlist else "плейлист"
         
         # Удаляем из БД (плейлист в Яндекс.Музыке остается, но мы теряем связь)
-        await asyncio.to_thread(self.db.delete_playlist, playlist_id)
+        await self.db.delete_playlist(playlist_id)
         
         # Удаляем из контекста
         self.context_manager.clear_active_playlist(telegram_id)
         
         await message.answer(f"✅ Плейлист «{title}» удален из базы данных бота.")
-        await asyncio.to_thread(self.db.log_action, telegram_id, "playlist_deleted", playlist_id, None)
+        await self.db.log_action(telegram_id, "playlist_deleted", playlist_id, None)
     
     async def delete_track_start(self, message_or_query, state: FSMContext):
         """Начало удаления трека (FSM)."""
@@ -669,7 +669,7 @@ class CommandHandlers:
             telegram_id = message.from_user.id
             playlist_id = None
         
-        await asyncio.to_thread(self.db.ensure_user, telegram_id, message.from_user.username if hasattr(message.from_user, 'username') else None)
+        await self.db.ensure_user(telegram_id, message.from_user.username if hasattr(message.from_user, 'username') else None)
         
         # FSM диалог
         if not playlist_id:
@@ -684,8 +684,8 @@ class CommandHandlers:
             return
         
         # Проверяем доступ
-        if not await asyncio.to_thread(self.db.check_playlist_access, playlist_id, telegram_id, need_edit=True):
-            playlist = await asyncio.to_thread(self.db.get_playlist, playlist_id)
+        if not await self.db.check_playlist_access(playlist_id, telegram_id, need_edit=True):
+            playlist = await self.db.get_playlist(playlist_id)
             title = playlist.get("title") or "плейлист" if playlist else "плейлист"
             await message.answer(
                 f"❌ У вас нет прав на удаление треков из плейлиста «{title}».\n\n"
@@ -770,7 +770,7 @@ class CommandHandlers:
             )
             return
         
-        playlist = await asyncio.to_thread(self.db.get_playlist, playlist_id)
+        playlist = await self.db.get_playlist(playlist_id)
         if not playlist:
             await message.answer(
                 "❌ Плейлист не найден.",
@@ -935,15 +935,15 @@ class CommandHandlers:
     async def buy_limit(self, message: Message):
         """Команда для покупки расширенного лимита."""
         telegram_id = message.from_user.id
-        await asyncio.to_thread(self.db.ensure_user, telegram_id, message.from_user.username)
+        await self.db.ensure_user(telegram_id, message.from_user.username)
         
         # Получаем доступные планы
         payment_service = PaymentService(self.db)
         plans = payment_service.get_available_plans()
         
         # Получаем текущий лимит пользователя
-        current_limit = await asyncio.to_thread(self.db.get_user_playlist_limit, telegram_id)
-        current_count = await asyncio.to_thread(self.db.count_user_playlists, telegram_id)
+        current_limit = await self.db.get_user_playlist_limit(telegram_id)
+        current_count = await self.db.count_user_playlists(telegram_id)
         limit_text = "безлимитно" if current_limit == -1 else f"{current_limit} плейлистов"
         
         # Формируем клавиатуру с тарифами
@@ -973,7 +973,7 @@ class CommandHandlers:
         
         # Проверяем платеж
         payment_service = PaymentService(self.db)
-        payment = await asyncio.to_thread(self.db.get_payment_by_payload, pre_checkout_query.invoice_payload)
+        payment = await self.db.get_payment_by_payload(pre_checkout_query.invoice_payload)
         
         if not payment or payment['status'] != 'pending':
             # Отклоняем платеж
@@ -1012,7 +1012,7 @@ class CommandHandlers:
         
         if success:
             # Получаем информацию о новой подписке
-            subscription = await asyncio.to_thread(self.db.get_active_subscription, telegram_id)
+            subscription = await self.db.get_active_subscription(telegram_id)
             if subscription:
                 plan = payment_service.get_available_plans()[subscription['subscription_type']]
                 limit = plan['limit']
@@ -1024,7 +1024,7 @@ class CommandHandlers:
                     f"Теперь вы можете создавать больше плейлистов!",
                     reply_markup=get_main_menu_keyboard()
                 )
-                await asyncio.to_thread(self.db.log_action, telegram_id, "subscription_purchased", None, f"type={subscription['subscription_type']}")
+                await self.db.log_action(telegram_id, "subscription_purchased", None, f"type={subscription['subscription_type']}")
         else:
             await message.answer(
                 "❌ Произошла ошибка при обработке платежа.\n"

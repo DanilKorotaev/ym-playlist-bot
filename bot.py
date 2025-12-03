@@ -65,6 +65,7 @@ if log_level > logging.DEBUG:
 
 # === Инициализация БД и менеджеров ===
 # Создаем БД на основе DB_TYPE из переменных окружения (по умолчанию: sqlite)
+# БД будет инициализирована асинхронно в main()
 db = create_database()
 client_manager = YandexClientManager(YANDEX_TOKEN, db)
 context_manager = UserContextManager(db)
@@ -129,6 +130,9 @@ async def main():
         
         logger.info("Запуск бота...")
         logger.info(f"TELEGRAM_TOKEN установлен: {'Да' if TELEGRAM_TOKEN else 'Нет'}")
+        
+        # Инициализируем БД асинхронно
+        await db.init_db()
         
         # Создаем Bot и Dispatcher
         bot_instance = Bot(token=TELEGRAM_TOKEN)

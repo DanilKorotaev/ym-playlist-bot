@@ -1,13 +1,11 @@
 """
-Реализация базы данных для PostgreSQL.
+Реализация базы данных для PostgreSQL с использованием asyncpg.
 """
-import psycopg2
-from psycopg2.extras import RealDictCursor
+import asyncpg
 import logging
 import os
 from typing import Optional, List, Dict
 from datetime import datetime
-from contextlib import contextmanager
 
 from .base import DatabaseInterface
 
@@ -50,27 +48,42 @@ class PostgreSQLDatabase(DatabaseInterface):
             "password": self.password
         }
         
-        self.init_db()
+        self._pool: Optional[asyncpg.Pool] = None
     
-    @contextmanager
-    def get_connection(self):
-        """Получить соединение с БД (context manager)."""
-        conn = psycopg2.connect(**self.connection_params)
-        try:
-            yield conn
-            conn.commit()
-        except Exception:
-            conn.rollback()
-            raise
-        finally:
-            conn.close()
+    async def _get_pool(self) -> asyncpg.Pool:
+        """Получить или создать connection pool."""
+        if self._pool is None:
+            self._pool = await asyncpg.create_pool(**self.connection_params)
+        return self._pool
     
-    def init_db(self):
+    async def _execute(self, query: str, *args):
+        """Выполнить запрос без возврата результата."""
+        pool = await self._get_pool()
+        async with pool.acquire() as conn:
+            if args:
+                await conn.execute(query, *args)
+            else:
+                await conn.execute(query)
+    
+    async def _fetchrow(self, query: str, *args) -> Optional[asyncpg.Record]:
+        """Выполнить запрос и вернуть одну строку."""
+        pool = await self._get_pool()
+        async with pool.acquire() as conn:
+            return await conn.fetchrow(query, *args)
+    
+    async def _fetch(self, query: str, *args) -> List[asyncpg.Record]:
+        """Выполнить запрос и вернуть все строки."""
+        pool = await self._get_pool()
+        async with pool.acquire() as conn:
+            return await conn.fetch(query, *args)
+    
+    async def init_db(self):
         """Инициализировать структуру БД."""
-        with self.get_connection() as conn:
-            with conn.cursor() as cursor:
+        pool = await self._get_pool()
+        async with pool.acquire() as conn:
+            async with conn.transaction():
                 # Таблица пользователей Telegram
-                cursor.execute("""
+                await conn.execute("""
                     CREATE TABLE IF NOT EXISTS users (
                         telegram_id BIGINT PRIMARY KEY,
                         username TEXT,
@@ -80,7 +93,7 @@ class PostgreSQLDatabase(DatabaseInterface):
                 """)
                 
                 # Таблица аккаунтов Яндекс.Музыки
-                cursor.execute("""
+                await conn.execute("""
                     CREATE TABLE IF NOT EXISTS yandex_accounts (
                         id SERIAL PRIMARY KEY,
                         telegram_id BIGINT,
@@ -92,19 +105,19 @@ class PostgreSQLDatabase(DatabaseInterface):
                 """)
                 
                 # Частичные уникальные индексы для правильной работы с NULL
-                cursor.execute("""
+                await conn.execute("""
                     CREATE UNIQUE INDEX IF NOT EXISTS idx_yandex_account_user_default 
                     ON yandex_accounts(telegram_id, is_default) 
                     WHERE telegram_id IS NOT NULL
                 """)
-                cursor.execute("""
+                await conn.execute("""
                     CREATE UNIQUE INDEX IF NOT EXISTS idx_yandex_account_global_default 
                     ON yandex_accounts(is_default) 
                     WHERE telegram_id IS NULL AND is_default = TRUE
                 """)
                 
                 # Таблица плейлистов
-                cursor.execute("""
+                await conn.execute("""
                     CREATE TABLE IF NOT EXISTS playlists (
                         id SERIAL PRIMARY KEY,
                         playlist_kind TEXT NOT NULL,
@@ -125,7 +138,7 @@ class PostgreSQLDatabase(DatabaseInterface):
                 """)
                 
                 # Миграция: добавляем поле insert_position если его нет
-                cursor.execute("""
+                await conn.execute("""
                     DO $$ 
                     BEGIN
                         IF NOT EXISTS (
@@ -138,7 +151,7 @@ class PostgreSQLDatabase(DatabaseInterface):
                 """)
                 
                 # Миграция: добавляем поле uuid если его нет
-                cursor.execute("""
+                await conn.execute("""
                     DO $$ 
                     BEGIN
                         IF NOT EXISTS (
@@ -151,7 +164,7 @@ class PostgreSQLDatabase(DatabaseInterface):
                 """)
                 
                 # Таблица доступа к плейлистам (кто может добавлять треки)
-                cursor.execute("""
+                await conn.execute("""
                     CREATE TABLE IF NOT EXISTS playlist_access (
                         id SERIAL PRIMARY KEY,
                         playlist_id INTEGER NOT NULL,
@@ -167,7 +180,7 @@ class PostgreSQLDatabase(DatabaseInterface):
                 """)
                 
                 # Таблица действий пользователей
-                cursor.execute("""
+                await conn.execute("""
                     CREATE TABLE IF NOT EXISTS actions (
                         id SERIAL PRIMARY KEY,
                         telegram_id BIGINT NOT NULL,
@@ -181,7 +194,7 @@ class PostgreSQLDatabase(DatabaseInterface):
                 """)
                 
                 # Таблица подписок пользователей
-                cursor.execute("""
+                await conn.execute("""
                     CREATE TABLE IF NOT EXISTS user_subscriptions (
                         id SERIAL PRIMARY KEY,
                         telegram_id BIGINT NOT NULL,
@@ -195,7 +208,7 @@ class PostgreSQLDatabase(DatabaseInterface):
                 """)
                 
                 # Таблица платежей
-                cursor.execute("""
+                await conn.execute("""
                     CREATE TABLE IF NOT EXISTS payments (
                         id SERIAL PRIMARY KEY,
                         telegram_id BIGINT NOT NULL,
@@ -210,460 +223,401 @@ class PostgreSQLDatabase(DatabaseInterface):
                 """)
                 
                 # Индексы для ускорения запросов
-                cursor.execute("CREATE INDEX IF NOT EXISTS idx_playlist_creator ON playlists(creator_telegram_id)")
-                cursor.execute("CREATE INDEX IF NOT EXISTS idx_playlist_share_token ON playlists(share_token)")
-                cursor.execute("CREATE INDEX IF NOT EXISTS idx_access_playlist ON playlist_access(playlist_id)")
-                cursor.execute("CREATE INDEX IF NOT EXISTS idx_access_user ON playlist_access(telegram_id)")
-                cursor.execute("CREATE INDEX IF NOT EXISTS idx_actions_user ON actions(telegram_id)")
-                cursor.execute("CREATE INDEX IF NOT EXISTS idx_actions_playlist ON actions(playlist_id)")
-                cursor.execute("CREATE INDEX IF NOT EXISTS idx_yandex_account_telegram ON yandex_accounts(telegram_id)")
-                cursor.execute("CREATE INDEX IF NOT EXISTS idx_user_subscriptions_telegram_id ON user_subscriptions(telegram_id)")
-                cursor.execute("CREATE INDEX IF NOT EXISTS idx_user_subscriptions_active ON user_subscriptions(telegram_id, is_active)")
-                cursor.execute("CREATE INDEX IF NOT EXISTS idx_payments_telegram_id ON payments(telegram_id)")
-                cursor.execute("CREATE INDEX IF NOT EXISTS idx_payments_payload ON payments(invoice_payload)")
+                await conn.execute("CREATE INDEX IF NOT EXISTS idx_playlist_creator ON playlists(creator_telegram_id)")
+                await conn.execute("CREATE INDEX IF NOT EXISTS idx_playlist_share_token ON playlists(share_token)")
+                await conn.execute("CREATE INDEX IF NOT EXISTS idx_access_playlist ON playlist_access(playlist_id)")
+                await conn.execute("CREATE INDEX IF NOT EXISTS idx_access_user ON playlist_access(telegram_id)")
+                await conn.execute("CREATE INDEX IF NOT EXISTS idx_actions_user ON actions(telegram_id)")
+                await conn.execute("CREATE INDEX IF NOT EXISTS idx_actions_playlist ON actions(playlist_id)")
+                await conn.execute("CREATE INDEX IF NOT EXISTS idx_yandex_account_telegram ON yandex_accounts(telegram_id)")
+                await conn.execute("CREATE INDEX IF NOT EXISTS idx_user_subscriptions_telegram_id ON user_subscriptions(telegram_id)")
+                await conn.execute("CREATE INDEX IF NOT EXISTS idx_user_subscriptions_active ON user_subscriptions(telegram_id, is_active)")
+                await conn.execute("CREATE INDEX IF NOT EXISTS idx_payments_telegram_id ON payments(telegram_id)")
+                await conn.execute("CREATE INDEX IF NOT EXISTS idx_payments_payload ON payments(invoice_payload)")
             
             logger.info("База данных PostgreSQL инициализирована")
     
     # === Работа с пользователями ===
     
-    def ensure_user(self, telegram_id: int, username: Optional[str] = None):
+    async def ensure_user(self, telegram_id: int, username: Optional[str] = None):
         """Создать или обновить пользователя."""
-        with self.get_connection() as conn:
-            with conn.cursor(cursor_factory=RealDictCursor) as cursor:
-                cursor.execute("""
-                    INSERT INTO users (telegram_id, username, updated_at)
-                    VALUES (%s, %s, NOW())
-                    ON CONFLICT (telegram_id) 
-                    DO UPDATE SET username = EXCLUDED.username, updated_at = NOW()
-                """, (telegram_id, username))
+        await self._execute("""
+            INSERT INTO users (telegram_id, username, updated_at)
+            VALUES ($1, $2, NOW())
+            ON CONFLICT (telegram_id) 
+            DO UPDATE SET username = EXCLUDED.username, updated_at = NOW()
+        """, telegram_id, username)
     
-    def get_user(self, telegram_id: int) -> Optional[Dict]:
+    async def get_user(self, telegram_id: int) -> Optional[Dict]:
         """Получить информацию о пользователе."""
-        with self.get_connection() as conn:
-            with conn.cursor(cursor_factory=RealDictCursor) as cursor:
-                cursor.execute("SELECT * FROM users WHERE telegram_id = %s", (telegram_id,))
-                row = cursor.fetchone()
-                return dict(row) if row else None
+        row = await self._fetchrow("SELECT * FROM users WHERE telegram_id = $1", telegram_id)
+        return dict(row) if row else None
     
     # === Работа с аккаунтами Яндекс.Музыки ===
     
-    def set_default_yandex_account(self, token: str):
+    async def set_default_yandex_account(self, token: str):
         """Установить дефолтный аккаунт Яндекс.Музыки (без привязки к пользователю)."""
-        with self.get_connection() as conn:
-            with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+        pool = await self._get_pool()
+        async with pool.acquire() as conn:
+            async with conn.transaction():
                 # Удаляем старый дефолтный аккаунт
-                cursor.execute("DELETE FROM yandex_accounts WHERE is_default = TRUE AND telegram_id IS NULL")
+                await conn.execute("DELETE FROM yandex_accounts WHERE is_default = TRUE AND telegram_id IS NULL")
                 # Добавляем новый
-                cursor.execute("""
+                await conn.execute("""
                     INSERT INTO yandex_accounts (telegram_id, token, is_default)
-                    VALUES (NULL, %s, TRUE)
-                """, (token,))
+                    VALUES (NULL, $1, TRUE)
+                """, token)
     
-    def get_default_yandex_account(self) -> Optional[Dict]:
+    async def get_default_yandex_account(self) -> Optional[Dict]:
         """Получить дефолтный аккаунт Яндекс.Музыки."""
-        with self.get_connection() as conn:
-            with conn.cursor(cursor_factory=RealDictCursor) as cursor:
-                cursor.execute("""
-                    SELECT * FROM yandex_accounts 
-                    WHERE is_default = TRUE AND telegram_id IS NULL
-                    ORDER BY id DESC LIMIT 1
-                """)
-                row = cursor.fetchone()
-                return dict(row) if row else None
+        row = await self._fetchrow("""
+            SELECT * FROM yandex_accounts 
+            WHERE is_default = TRUE AND telegram_id IS NULL
+            ORDER BY id DESC LIMIT 1
+        """)
+        return dict(row) if row else None
     
-    def set_user_yandex_token(self, telegram_id: int, token: str):
+    async def set_user_yandex_token(self, telegram_id: int, token: str):
         """Установить токен Яндекс.Музыки для пользователя."""
-        with self.get_connection() as conn:
-            with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+        pool = await self._get_pool()
+        async with pool.acquire() as conn:
+            async with conn.transaction():
                 # Удаляем старый токен пользователя
-                cursor.execute("DELETE FROM yandex_accounts WHERE telegram_id = %s AND is_default = FALSE", (telegram_id,))
+                await conn.execute("DELETE FROM yandex_accounts WHERE telegram_id = $1 AND is_default = FALSE", telegram_id)
                 # Добавляем новый
-                cursor.execute("""
+                await conn.execute("""
                     INSERT INTO yandex_accounts (telegram_id, token, is_default)
-                    VALUES (%s, %s, FALSE)
-                """, (telegram_id, token))
+                    VALUES ($1, $2, FALSE)
+                """, telegram_id, token)
     
-    def get_user_yandex_token(self, telegram_id: int) -> Optional[str]:
+    async def get_user_yandex_token(self, telegram_id: int) -> Optional[str]:
         """Получить токен Яндекс.Музыки пользователя."""
-        with self.get_connection() as conn:
-            with conn.cursor(cursor_factory=RealDictCursor) as cursor:
-                cursor.execute("""
-                    SELECT token FROM yandex_accounts 
-                    WHERE telegram_id = %s AND is_default = FALSE
-                    ORDER BY id DESC LIMIT 1
-                """, (telegram_id,))
-                row = cursor.fetchone()
-                return row["token"] if row else None
+        row = await self._fetchrow("""
+            SELECT token FROM yandex_accounts 
+            WHERE telegram_id = $1 AND is_default = FALSE
+            ORDER BY id DESC LIMIT 1
+        """, telegram_id)
+        return row["token"] if row else None
     
-    def get_yandex_account_for_user(self, telegram_id: int) -> Optional[Dict]:
+    async def get_yandex_account_for_user(self, telegram_id: int) -> Optional[Dict]:
         """Получить аккаунт Яндекс.Музыки для пользователя (сначала свой, потом дефолтный)."""
         # Сначала пробуем получить токен пользователя
-        user_token = self.get_user_yandex_token(telegram_id)
+        user_token = await self.get_user_yandex_token(telegram_id)
         if user_token:
-            with self.get_connection() as conn:
-                with conn.cursor(cursor_factory=RealDictCursor) as cursor:
-                    cursor.execute("""
-                        SELECT * FROM yandex_accounts 
-                        WHERE telegram_id = %s AND is_default = FALSE
-                        ORDER BY id DESC LIMIT 1
-                    """, (telegram_id,))
-                    row = cursor.fetchone()
-                    if row:
-                        return dict(row)
+            row = await self._fetchrow("""
+                SELECT * FROM yandex_accounts 
+                WHERE telegram_id = $1 AND is_default = FALSE
+                ORDER BY id DESC LIMIT 1
+            """, telegram_id)
+            if row:
+                return dict(row)
         
         # Если нет своего, возвращаем дефолтный
-        return self.get_default_yandex_account()
+        return await self.get_default_yandex_account()
     
-    def get_yandex_account_by_id(self, account_id: int) -> Optional[Dict]:
+    async def get_yandex_account_by_id(self, account_id: int) -> Optional[Dict]:
         """Получить аккаунт Яндекс.Музыки по ID."""
-        with self.get_connection() as conn:
-            with conn.cursor(cursor_factory=RealDictCursor) as cursor:
-                cursor.execute("SELECT * FROM yandex_accounts WHERE id = %s", (account_id,))
-                row = cursor.fetchone()
-                return dict(row) if row else None
+        row = await self._fetchrow("SELECT * FROM yandex_accounts WHERE id = $1", account_id)
+        return dict(row) if row else None
     
     # === Работа с плейлистами ===
     
-    def create_playlist(self, playlist_kind: str, owner_id: str, creator_telegram_id: int,
+    async def create_playlist(self, playlist_kind: str, owner_id: str, creator_telegram_id: int,
                        yandex_account_id: Optional[int] = None, title: Optional[str] = None,
                        share_token: Optional[str] = None, insert_position: str = 'end',
                        uuid: Optional[str] = None) -> int:
         """Создать новый плейлист."""
-        with self.get_connection() as conn:
-            with conn.cursor(cursor_factory=RealDictCursor) as cursor:
-                cursor.execute("""
+        pool = await self._get_pool()
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                row = await conn.fetchrow("""
                     INSERT INTO playlists (playlist_kind, owner_id, creator_telegram_id, 
                                          yandex_account_id, title, share_token, insert_position, uuid)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
                     RETURNING id
-                """, (playlist_kind, owner_id, creator_telegram_id, yandex_account_id, title, share_token, insert_position, uuid))
-                playlist_id = cursor.fetchone()["id"]
+                """, playlist_kind, owner_id, creator_telegram_id, yandex_account_id, title, share_token, insert_position, uuid)
+                playlist_id = row["id"]
                 
                 # Автоматически даем создателю полный доступ
-                cursor.execute("""
+                await conn.execute("""
                     INSERT INTO playlist_access (playlist_id, telegram_id, can_add, can_edit, can_delete)
-                    VALUES (%s, %s, TRUE, TRUE, TRUE)
-                """, (playlist_id, creator_telegram_id))
+                    VALUES ($1, $2, TRUE, TRUE, TRUE)
+                """, playlist_id, creator_telegram_id)
                 
                 return playlist_id
     
-    def get_playlist(self, playlist_id: int) -> Optional[Dict]:
+    async def get_playlist(self, playlist_id: int) -> Optional[Dict]:
         """Получить информацию о плейлисте."""
-        with self.get_connection() as conn:
-            with conn.cursor(cursor_factory=RealDictCursor) as cursor:
-                cursor.execute("SELECT * FROM playlists WHERE id = %s", (playlist_id,))
-                row = cursor.fetchone()
-                return dict(row) if row else None
+        row = await self._fetchrow("SELECT * FROM playlists WHERE id = $1", playlist_id)
+        return dict(row) if row else None
     
-    def get_playlist_by_share_token(self, share_token: str) -> Optional[Dict]:
+    async def get_playlist_by_share_token(self, share_token: str) -> Optional[Dict]:
         """Получить плейлист по токену для шаринга."""
-        with self.get_connection() as conn:
-            with conn.cursor(cursor_factory=RealDictCursor) as cursor:
-                cursor.execute("SELECT * FROM playlists WHERE share_token = %s", (share_token,))
-                row = cursor.fetchone()
-                return dict(row) if row else None
+        row = await self._fetchrow("SELECT * FROM playlists WHERE share_token = $1", share_token)
+        return dict(row) if row else None
     
-    def get_playlist_by_kind_and_owner(self, playlist_kind: str, owner_id: str) -> Optional[Dict]:
+    async def get_playlist_by_kind_and_owner(self, playlist_kind: str, owner_id: str) -> Optional[Dict]:
         """Получить плейлист по kind и owner_id."""
-        with self.get_connection() as conn:
-            with conn.cursor(cursor_factory=RealDictCursor) as cursor:
-                cursor.execute("""
-                    SELECT * FROM playlists 
-                    WHERE playlist_kind = %s AND owner_id = %s
-                    ORDER BY id DESC LIMIT 1
-                """, (playlist_kind, owner_id))
-                row = cursor.fetchone()
-                return dict(row) if row else None
+        row = await self._fetchrow("""
+            SELECT * FROM playlists 
+            WHERE playlist_kind = $1 AND owner_id = $2
+            ORDER BY id DESC LIMIT 1
+        """, playlist_kind, owner_id)
+        return dict(row) if row else None
     
-    def get_user_playlists(self, telegram_id: int, only_created: bool = False) -> List[Dict]:
+    async def get_user_playlists(self, telegram_id: int, only_created: bool = False) -> List[Dict]:
         """Получить плейлисты пользователя."""
-        with self.get_connection() as conn:
-            with conn.cursor(cursor_factory=RealDictCursor) as cursor:
-                if only_created:
-                    # Только созданные пользователем
-                    cursor.execute("""
-                        SELECT p.* FROM playlists p
-                        WHERE p.creator_telegram_id = %s
-                        ORDER BY p.created_at DESC
-                    """, (telegram_id,))
-                else:
-                    # Все плейлисты, к которым есть доступ
-                    cursor.execute("""
-                        SELECT DISTINCT p.* FROM playlists p
-                        LEFT JOIN playlist_access pa ON p.id = pa.playlist_id
-                        WHERE p.creator_telegram_id = %s OR pa.telegram_id = %s
-                        ORDER BY p.created_at DESC
-                    """, (telegram_id, telegram_id))
-                
-                rows = cursor.fetchall()
-                return [dict(row) for row in rows]
+        if only_created:
+            # Только созданные пользователем
+            rows = await self._fetch("""
+                SELECT p.* FROM playlists p
+                WHERE p.creator_telegram_id = $1
+                ORDER BY p.created_at DESC
+            """, telegram_id)
+        else:
+            # Все плейлисты, к которым есть доступ
+            rows = await self._fetch("""
+                SELECT DISTINCT p.* FROM playlists p
+                LEFT JOIN playlist_access pa ON p.id = pa.playlist_id
+                WHERE p.creator_telegram_id = $1 OR pa.telegram_id = $1
+                ORDER BY p.created_at DESC
+            """, telegram_id)
+        
+        return [dict(row) for row in rows]
     
-    def count_user_playlists(self, telegram_id: int) -> int:
+    async def count_user_playlists(self, telegram_id: int) -> int:
         """Подсчитать количество созданных пользователем плейлистов."""
-        with self.get_connection() as conn:
-            with conn.cursor(cursor_factory=RealDictCursor) as cursor:
-                cursor.execute("""
-                    SELECT COUNT(*) as count FROM playlists
-                    WHERE creator_telegram_id = %s
-                """, (telegram_id,))
-                row = cursor.fetchone()
-                return row["count"] if row else 0
+        row = await self._fetchrow("""
+            SELECT COUNT(*) as count FROM playlists
+            WHERE creator_telegram_id = $1
+        """, telegram_id)
+        return row["count"] if row else 0
     
-    def get_shared_playlists(self, telegram_id: int) -> List[Dict]:
+    async def get_shared_playlists(self, telegram_id: int) -> List[Dict]:
         """Получить плейлисты, куда пользователь добавляет (но не создавал)."""
-        with self.get_connection() as conn:
-            with conn.cursor(cursor_factory=RealDictCursor) as cursor:
-                cursor.execute("""
-                    SELECT DISTINCT p.* FROM playlists p
-                    INNER JOIN playlist_access pa ON p.id = pa.playlist_id
-                    WHERE pa.telegram_id = %s AND p.creator_telegram_id != %s
-                    ORDER BY p.created_at DESC
-                """, (telegram_id, telegram_id))
-                rows = cursor.fetchall()
-                return [dict(row) for row in rows]
+        rows = await self._fetch("""
+            SELECT DISTINCT p.* FROM playlists p
+            INNER JOIN playlist_access pa ON p.id = pa.playlist_id
+            WHERE pa.telegram_id = $1 AND p.creator_telegram_id != $1
+            ORDER BY p.created_at DESC
+        """, telegram_id)
+        return [dict(row) for row in rows]
     
-    def update_playlist(self, playlist_id: int, title: Optional[str] = None,
+    async def update_playlist(self, playlist_id: int, title: Optional[str] = None,
                        description: Optional[str] = None, cover_url: Optional[str] = None,
                        share_token: Optional[str] = None, insert_position: Optional[str] = None,
                        uuid: Optional[str] = None):
         """Обновить информацию о плейлисте."""
-        with self.get_connection() as conn:
-            with conn.cursor(cursor_factory=RealDictCursor) as cursor:
-                updates = []
-                params = []
-                
-                if title is not None:
-                    updates.append("title = %s")
-                    params.append(title)
-                if description is not None:
-                    updates.append("description = %s")
-                    params.append(description)
-                if cover_url is not None:
-                    updates.append("cover_url = %s")
-                    params.append(cover_url)
-                if share_token is not None:
-                    updates.append("share_token = %s")
-                    params.append(share_token)
-                if insert_position is not None:
-                    updates.append("insert_position = %s")
-                    params.append(insert_position)
-                if uuid is not None:
-                    updates.append("uuid = %s")
-                    params.append(uuid)
-                
-                if updates:
-                    updates.append("updated_at = NOW()")
-                    params.append(playlist_id)
-                    cursor.execute(f"""
-                        UPDATE playlists 
-                        SET {', '.join(updates)}
-                        WHERE id = %s
-                    """, params)
+        updates = []
+        params = []
+        param_num = 1
+        
+        if title is not None:
+            updates.append(f"title = ${param_num}")
+            params.append(title)
+            param_num += 1
+        if description is not None:
+            updates.append(f"description = ${param_num}")
+            params.append(description)
+            param_num += 1
+        if cover_url is not None:
+            updates.append(f"cover_url = ${param_num}")
+            params.append(cover_url)
+            param_num += 1
+        if share_token is not None:
+            updates.append(f"share_token = ${param_num}")
+            params.append(share_token)
+            param_num += 1
+        if insert_position is not None:
+            updates.append(f"insert_position = ${param_num}")
+            params.append(insert_position)
+            param_num += 1
+        if uuid is not None:
+            updates.append(f"uuid = ${param_num}")
+            params.append(uuid)
+            param_num += 1
+        
+        if updates:
+            updates.append("updated_at = NOW()")
+            params.append(playlist_id)
+            query = f"""
+                UPDATE playlists 
+                SET {', '.join(updates)}
+                WHERE id = ${param_num}
+            """
+            await self._execute(query, *params)
     
-    def delete_playlist(self, playlist_id: int):
+    async def delete_playlist(self, playlist_id: int):
         """Удалить плейлист (каскадно удалит доступы и действия)."""
-        with self.get_connection() as conn:
-            with conn.cursor(cursor_factory=RealDictCursor) as cursor:
-                cursor.execute("DELETE FROM playlists WHERE id = %s", (playlist_id,))
+        await self._execute("DELETE FROM playlists WHERE id = $1", playlist_id)
     
     # === Работа с доступом ===
     
-    def grant_playlist_access(self, playlist_id: int, telegram_id: int,
+    async def grant_playlist_access(self, playlist_id: int, telegram_id: int,
                              can_add: bool = True, can_edit: bool = False, can_delete: bool = False):
         """Предоставить доступ к плейлисту."""
-        with self.get_connection() as conn:
-            with conn.cursor(cursor_factory=RealDictCursor) as cursor:
-                cursor.execute("""
-                    INSERT INTO playlist_access 
-                    (playlist_id, telegram_id, can_add, can_edit, can_delete)
-                    VALUES (%s, %s, %s, %s, %s)
-                    ON CONFLICT (playlist_id, telegram_id)
-                    DO UPDATE SET 
-                        can_add = EXCLUDED.can_add,
-                        can_edit = EXCLUDED.can_edit,
-                        can_delete = EXCLUDED.can_delete
-                """, (playlist_id, telegram_id, can_add, can_edit, can_delete))
+        await self._execute("""
+            INSERT INTO playlist_access 
+            (playlist_id, telegram_id, can_add, can_edit, can_delete)
+            VALUES ($1, $2, $3, $4, $5)
+            ON CONFLICT (playlist_id, telegram_id)
+            DO UPDATE SET 
+                can_add = EXCLUDED.can_add,
+                can_edit = EXCLUDED.can_edit,
+                can_delete = EXCLUDED.can_delete
+        """, playlist_id, telegram_id, can_add, can_edit, can_delete)
     
-    def check_playlist_access(self, playlist_id: int, telegram_id: int,
+    async def check_playlist_access(self, playlist_id: int, telegram_id: int,
                              need_add: bool = False, need_edit: bool = False,
                              need_delete: bool = False) -> bool:
         """Проверить доступ пользователя к плейлисту."""
-        with self.get_connection() as conn:
-            with conn.cursor(cursor_factory=RealDictCursor) as cursor:
-                cursor.execute("""
-                    SELECT can_add, can_edit, can_delete FROM playlist_access
-                    WHERE playlist_id = %s AND telegram_id = %s
-                """, (playlist_id, telegram_id))
-                row = cursor.fetchone()
-                
-                if not row:
-                    return False
-                
-                if need_add and not row["can_add"]:
-                    return False
-                if need_edit and not row["can_edit"]:
-                    return False
-                if need_delete and not row["can_delete"]:
-                    return False
-                
-                return True
+        row = await self._fetchrow("""
+            SELECT can_add, can_edit, can_delete FROM playlist_access
+            WHERE playlist_id = $1 AND telegram_id = $2
+        """, playlist_id, telegram_id)
+        
+        if not row:
+            return False
+        
+        if need_add and not row["can_add"]:
+            return False
+        if need_edit and not row["can_edit"]:
+            return False
+        if need_delete and not row["can_delete"]:
+            return False
+        
+        return True
     
-    def is_playlist_creator(self, playlist_id: int, telegram_id: int) -> bool:
+    async def is_playlist_creator(self, playlist_id: int, telegram_id: int) -> bool:
         """Проверить, является ли пользователь создателем плейлиста."""
-        with self.get_connection() as conn:
-            with conn.cursor(cursor_factory=RealDictCursor) as cursor:
-                cursor.execute("""
-                    SELECT creator_telegram_id FROM playlists
-                    WHERE id = %s AND creator_telegram_id = %s
-                """, (playlist_id, telegram_id))
-                row = cursor.fetchone()
-                return row is not None
+        row = await self._fetchrow("""
+            SELECT creator_telegram_id FROM playlists
+            WHERE id = $1 AND creator_telegram_id = $2
+        """, playlist_id, telegram_id)
+        return row is not None
     
     # === Работа с действиями ===
     
-    def log_action(self, telegram_id: int, action_type: str, playlist_id: Optional[int] = None,
+    async def log_action(self, telegram_id: int, action_type: str, playlist_id: Optional[int] = None,
                    action_data: Optional[str] = None):
         """Записать действие пользователя."""
-        with self.get_connection() as conn:
-            with conn.cursor(cursor_factory=RealDictCursor) as cursor:
-                cursor.execute("""
-                    INSERT INTO actions (telegram_id, playlist_id, action_type, action_data)
-                    VALUES (%s, %s, %s, %s)
-                """, (telegram_id, playlist_id, action_type, action_data))
+        await self._execute("""
+            INSERT INTO actions (telegram_id, playlist_id, action_type, action_data)
+            VALUES ($1, $2, $3, $4)
+        """, telegram_id, playlist_id, action_type, action_data)
     
-    def get_user_actions(self, telegram_id: int, limit: int = 100) -> List[Dict]:
+    async def get_user_actions(self, telegram_id: int, limit: int = 100) -> List[Dict]:
         """Получить последние действия пользователя."""
-        with self.get_connection() as conn:
-            with conn.cursor(cursor_factory=RealDictCursor) as cursor:
-                cursor.execute("""
-                    SELECT * FROM actions
-                    WHERE telegram_id = %s
-                    ORDER BY created_at DESC
-                    LIMIT %s
-                """, (telegram_id, limit))
-                rows = cursor.fetchall()
-                return [dict(row) for row in rows]
+        rows = await self._fetch("""
+            SELECT * FROM actions
+            WHERE telegram_id = $1
+            ORDER BY created_at DESC
+            LIMIT $2
+        """, telegram_id, limit)
+        return [dict(row) for row in rows]
     
-    def get_playlist_actions(self, playlist_id: int, limit: int = 100) -> List[Dict]:
+    async def get_playlist_actions(self, playlist_id: int, limit: int = 100) -> List[Dict]:
         """Получить последние действия с плейлистом."""
-        with self.get_connection() as conn:
-            with conn.cursor(cursor_factory=RealDictCursor) as cursor:
-                cursor.execute("""
-                    SELECT * FROM actions
-                    WHERE playlist_id = %s
-                    ORDER BY created_at DESC
-                    LIMIT %s
-                """, (playlist_id, limit))
-                rows = cursor.fetchall()
-                return [dict(row) for row in rows]
+        rows = await self._fetch("""
+            SELECT * FROM actions
+            WHERE playlist_id = $1
+            ORDER BY created_at DESC
+            LIMIT $2
+        """, playlist_id, limit)
+        return [dict(row) for row in rows]
     
     # === Работа с подписками и лимитами ===
     
-    def get_user_playlist_limit(self, telegram_id: int) -> int:
+    async def get_user_playlist_limit(self, telegram_id: int) -> int:
         """Получить текущий лимит плейлистов для пользователя."""
         import os
         DEFAULT_PLAYLIST_LIMIT = 2
         PLAYLIST_LIMIT = int(os.getenv("PLAYLIST_LIMIT", DEFAULT_PLAYLIST_LIMIT))
         
-        with self.get_connection() as conn:
-            with conn.cursor(cursor_factory=RealDictCursor) as cursor:
-                # Получаем активную подписку
-                cursor.execute("""
-                    SELECT subscription_type FROM user_subscriptions
-                    WHERE telegram_id = %s AND is_active = TRUE
-                    AND (expires_at IS NULL OR expires_at > NOW())
-                    ORDER BY purchased_at DESC
-                    LIMIT 1
-                """, (telegram_id,))
-                row = cursor.fetchone()
-                
-                if row:
-                    subscription_type = row["subscription_type"]
-                    # Парсим тип подписки для получения лимита
-                    if subscription_type == "playlist_limit_unlimited":
+        # Получаем активную подписку
+        row = await self._fetchrow("""
+            SELECT subscription_type FROM user_subscriptions
+            WHERE telegram_id = $1 AND is_active = TRUE
+            AND (expires_at IS NULL OR expires_at > NOW())
+            ORDER BY purchased_at DESC
+            LIMIT 1
+        """, telegram_id)
+        
+        if row:
+            subscription_type = row["subscription_type"]
+            # Парсим тип подписки для получения лимита
+            if subscription_type == "playlist_limit_unlimited":
+                return -1
+            elif subscription_type.startswith("playlist_limit_"):
+                try:
+                    limit_str = subscription_type.replace("playlist_limit_", "")
+                    if limit_str == "unlimited":
                         return -1
-                    elif subscription_type.startswith("playlist_limit_"):
-                        try:
-                            limit_str = subscription_type.replace("playlist_limit_", "")
-                            if limit_str == "unlimited":
-                                return -1
-                            return int(limit_str)
-                        except ValueError:
-                            pass
-                
-                return PLAYLIST_LIMIT
+                    return int(limit_str)
+                except ValueError:
+                    pass
+        
+        return PLAYLIST_LIMIT
     
-    def create_subscription(self, telegram_id: int, subscription_type: str, 
+    async def create_subscription(self, telegram_id: int, subscription_type: str, 
                            stars_amount: int, expires_at: Optional[datetime] = None) -> int:
         """Создать подписку для пользователя."""
-        with self.get_connection() as conn:
-            with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+        pool = await self._get_pool()
+        async with pool.acquire() as conn:
+            async with conn.transaction():
                 # Деактивируем старые подписки того же типа
-                cursor.execute("""
+                await conn.execute("""
                     UPDATE user_subscriptions
                     SET is_active = FALSE
-                    WHERE telegram_id = %s AND subscription_type = %s AND is_active = TRUE
-                """, (telegram_id, subscription_type))
+                    WHERE telegram_id = $1 AND subscription_type = $2 AND is_active = TRUE
+                """, telegram_id, subscription_type)
                 
                 # Создаем новую подписку
-                cursor.execute("""
+                row = await conn.fetchrow("""
                     INSERT INTO user_subscriptions 
                     (telegram_id, subscription_type, stars_amount, expires_at)
-                    VALUES (%s, %s, %s, %s)
+                    VALUES ($1, $2, $3, $4)
                     RETURNING id
-                """, (telegram_id, subscription_type, stars_amount, expires_at))
-                result = cursor.fetchone()
-                return result["id"]
+                """, telegram_id, subscription_type, stars_amount, expires_at)
+                return row["id"]
     
-    def get_active_subscription(self, telegram_id: int) -> Optional[Dict]:
+    async def get_active_subscription(self, telegram_id: int) -> Optional[Dict]:
         """Получить активную подписку пользователя."""
-        with self.get_connection() as conn:
-            with conn.cursor(cursor_factory=RealDictCursor) as cursor:
-                cursor.execute("""
-                    SELECT * FROM user_subscriptions
-                    WHERE telegram_id = %s AND is_active = TRUE
-                    AND (expires_at IS NULL OR expires_at > NOW())
-                    ORDER BY purchased_at DESC
-                    LIMIT 1
-                """, (telegram_id,))
-                row = cursor.fetchone()
-                return dict(row) if row else None
+        row = await self._fetchrow("""
+            SELECT * FROM user_subscriptions
+            WHERE telegram_id = $1 AND is_active = TRUE
+            AND (expires_at IS NULL OR expires_at > NOW())
+            ORDER BY purchased_at DESC
+            LIMIT 1
+        """, telegram_id)
+        return dict(row) if row else None
     
     # === Работа с платежами ===
     
-    def create_payment(self, telegram_id: int, invoice_payload: str, 
+    async def create_payment(self, telegram_id: int, invoice_payload: str, 
                       stars_amount: int, subscription_type: str) -> int:
         """Создать запись о платеже."""
-        with self.get_connection() as conn:
-            with conn.cursor(cursor_factory=RealDictCursor) as cursor:
-                cursor.execute("""
-                    INSERT INTO payments 
-                    (telegram_id, invoice_payload, stars_amount, subscription_type, status)
-                    VALUES (%s, %s, %s, %s, 'pending')
-                    RETURNING id
-                """, (telegram_id, invoice_payload, stars_amount, subscription_type))
-                result = cursor.fetchone()
-                return result["id"]
+        row = await self._fetchrow("""
+            INSERT INTO payments 
+            (telegram_id, invoice_payload, stars_amount, subscription_type, status)
+            VALUES ($1, $2, $3, $4, 'pending')
+            RETURNING id
+        """, telegram_id, invoice_payload, stars_amount, subscription_type)
+        return row["id"]
     
-    def update_payment_status(self, invoice_payload: str, status: str):
+    async def update_payment_status(self, invoice_payload: str, status: str):
         """Обновить статус платежа."""
-        with self.get_connection() as conn:
-            with conn.cursor(cursor_factory=RealDictCursor) as cursor:
-                completed_at = datetime.now() if status == "completed" else None
-                cursor.execute("""
-                    UPDATE payments
-                    SET status = %s, completed_at = %s
-                    WHERE invoice_payload = %s
-                """, (status, completed_at, invoice_payload))
+        completed_at = datetime.now() if status == "completed" else None
+        await self._execute("""
+            UPDATE payments
+            SET status = $1, completed_at = $2
+            WHERE invoice_payload = $3
+        """, status, completed_at, invoice_payload)
     
-    def get_payment_by_payload(self, invoice_payload: str) -> Optional[Dict]:
+    async def get_payment_by_payload(self, invoice_payload: str) -> Optional[Dict]:
         """Получить платеж по payload."""
-        with self.get_connection() as conn:
-            with conn.cursor(cursor_factory=RealDictCursor) as cursor:
-                cursor.execute("""
-                    SELECT * FROM payments
-                    WHERE invoice_payload = %s
-                """, (invoice_payload,))
-                row = cursor.fetchone()
-                return dict(row) if row else None
-
+        row = await self._fetchrow("""
+            SELECT * FROM payments
+            WHERE invoice_payload = $1
+        """, invoice_payload)
+        return dict(row) if row else None
