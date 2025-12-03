@@ -116,6 +116,7 @@ class PostgreSQLDatabase(DatabaseInterface):
                         cover_url TEXT,
                         share_token TEXT UNIQUE,
                         insert_position TEXT DEFAULT 'end' CHECK (insert_position IN ('start', 'end')),
+                        uuid TEXT,
                         created_at TIMESTAMP DEFAULT NOW(),
                         updated_at TIMESTAMP DEFAULT NOW(),
                         FOREIGN KEY (creator_telegram_id) REFERENCES users(telegram_id) ON DELETE CASCADE,
@@ -132,6 +133,19 @@ class PostgreSQLDatabase(DatabaseInterface):
                             WHERE table_name='playlists' AND column_name='insert_position'
                         ) THEN
                             ALTER TABLE playlists ADD COLUMN insert_position TEXT DEFAULT 'end' CHECK (insert_position IN ('start', 'end'));
+                        END IF;
+                    END $$;
+                """)
+                
+                # Миграция: добавляем поле uuid если его нет
+                cursor.execute("""
+                    DO $$ 
+                    BEGIN
+                        IF NOT EXISTS (
+                            SELECT 1 FROM information_schema.columns 
+                            WHERE table_name='playlists' AND column_name='uuid'
+                        ) THEN
+                            ALTER TABLE playlists ADD COLUMN uuid TEXT;
                         END IF;
                     END $$;
                 """)
@@ -312,16 +326,17 @@ class PostgreSQLDatabase(DatabaseInterface):
     
     def create_playlist(self, playlist_kind: str, owner_id: str, creator_telegram_id: int,
                        yandex_account_id: Optional[int] = None, title: Optional[str] = None,
-                       share_token: Optional[str] = None, insert_position: str = 'end') -> int:
+                       share_token: Optional[str] = None, insert_position: str = 'end',
+                       uuid: Optional[str] = None) -> int:
         """Создать новый плейлист."""
         with self.get_connection() as conn:
             with conn.cursor(cursor_factory=RealDictCursor) as cursor:
                 cursor.execute("""
                     INSERT INTO playlists (playlist_kind, owner_id, creator_telegram_id, 
-                                         yandex_account_id, title, share_token, insert_position)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                                         yandex_account_id, title, share_token, insert_position, uuid)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                     RETURNING id
-                """, (playlist_kind, owner_id, creator_telegram_id, yandex_account_id, title, share_token, insert_position))
+                """, (playlist_kind, owner_id, creator_telegram_id, yandex_account_id, title, share_token, insert_position, uuid))
                 playlist_id = cursor.fetchone()["id"]
                 
                 # Автоматически даем создателю полный доступ
@@ -409,7 +424,8 @@ class PostgreSQLDatabase(DatabaseInterface):
     
     def update_playlist(self, playlist_id: int, title: Optional[str] = None,
                        description: Optional[str] = None, cover_url: Optional[str] = None,
-                       share_token: Optional[str] = None, insert_position: Optional[str] = None):
+                       share_token: Optional[str] = None, insert_position: Optional[str] = None,
+                       uuid: Optional[str] = None):
         """Обновить информацию о плейлисте."""
         with self.get_connection() as conn:
             with conn.cursor(cursor_factory=RealDictCursor) as cursor:
@@ -431,6 +447,9 @@ class PostgreSQLDatabase(DatabaseInterface):
                 if insert_position is not None:
                     updates.append("insert_position = %s")
                     params.append(insert_position)
+                if uuid is not None:
+                    updates.append("uuid = %s")
+                    params.append(uuid)
                 
                 if updates:
                     updates.append("updated_at = NOW()")

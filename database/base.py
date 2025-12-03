@@ -63,11 +63,13 @@ class DatabaseInterface(ABC):
     @abstractmethod
     def create_playlist(self, playlist_kind: str, owner_id: str, creator_telegram_id: int,
                        yandex_account_id: Optional[int] = None, title: Optional[str] = None,
-                       share_token: Optional[str] = None, insert_position: str = 'end') -> int:
+                       share_token: Optional[str] = None, insert_position: str = 'end',
+                       uuid: Optional[str] = None) -> int:
         """Создать новый плейлист.
         
         Args:
             insert_position: 'start' для добавления в начало, 'end' для добавления в конец (по умолчанию 'end')
+            uuid: UUID плейлиста для короткой ссылки
         """
         pass
     
@@ -104,11 +106,13 @@ class DatabaseInterface(ABC):
     @abstractmethod
     def update_playlist(self, playlist_id: int, title: Optional[str] = None,
                        description: Optional[str] = None, cover_url: Optional[str] = None,
-                       share_token: Optional[str] = None, insert_position: Optional[str] = None):
+                       share_token: Optional[str] = None, insert_position: Optional[str] = None,
+                       uuid: Optional[str] = None):
         """Обновить информацию о плейлисте.
         
         Args:
             insert_position: 'start' для добавления в начало, 'end' для добавления в конец (None - не обновлять)
+            uuid: UUID плейлиста для короткой ссылки (None - не обновлять)
         """
         pass
     
