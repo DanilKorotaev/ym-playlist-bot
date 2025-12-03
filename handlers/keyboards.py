@@ -1,16 +1,25 @@
 """
 Модуль для создания клавиатур Telegram бота.
 """
-from aiogram.types import ReplyKeyboardMarkup
+from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
 
 
 def get_main_menu_keyboard():
     """Возвращает клавиатуру главного меню."""
     return ReplyKeyboardMarkup(
-        [
-            ["📁 Мои плейлисты", "📂 Общие плейлисты"],
-            ["➕ Создать плейлист", "📋 Список треков"],
-            ["ℹ️ Информация", "🏠 Главное меню"]
+        keyboard=[
+            [
+                KeyboardButton(text="📁 Мои плейлисты"),
+                KeyboardButton(text="📂 Общие плейлисты")
+            ],
+            [
+                KeyboardButton(text="➕ Создать плейлист"),
+                KeyboardButton(text="📋 Список треков")
+            ],
+            [
+                KeyboardButton(text="ℹ️ Информация"),
+                KeyboardButton(text="🏠 Главное меню")
+            ]
         ],
         resize_keyboard=True
     )
@@ -19,7 +28,9 @@ def get_main_menu_keyboard():
 def get_cancel_keyboard():
     """Возвращает клавиатуру с кнопкой отмены."""
     return ReplyKeyboardMarkup(
-        [["❌ Отмена"]],
+        keyboard=[
+            [KeyboardButton(text="❌ Отмена")]
+        ],
         resize_keyboard=True
     )
 

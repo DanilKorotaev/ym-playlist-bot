@@ -188,8 +188,7 @@ class CallbackHandlers:
         
         # Создаем инвойс
         try:
-            bot = Bot.get_current()
-            invoice_link = await bot.create_invoice_link(
+            invoice_link = await query.bot.create_invoice_link(
                 title=f"Расширенный лимит: {plan['name']}",
                 description=f"Увеличьте лимит плейлистов до {plan['name']}",
                 payload=payment_data['payload'],

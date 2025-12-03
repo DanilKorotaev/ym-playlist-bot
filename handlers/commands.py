@@ -201,8 +201,7 @@ class CommandHandlers:
         
         if result:
             playlist_id = result["id"]
-            bot = Bot.get_current()
-            bot_info = await bot.get_me()
+            bot_info = await message.bot.get_me()
             share_link = await self.playlist_service.get_share_link(playlist_id, bot_info.username)
             
             self.context_manager.set_active_playlist(telegram_id, playlist_id)
@@ -346,8 +345,7 @@ class CommandHandlers:
         
         title = playlist.get("title") or "Без названия"
         is_creator = await asyncio.to_thread(self.db.is_playlist_creator, playlist_id, telegram_id)
-        bot = Bot.get_current()
-        bot_info = await bot.get_me()
+        bot_info = await message.bot.get_me()
         share_link = await self.playlist_service.get_share_link(playlist_id, bot_info.username)
         yandex_link = await self.playlist_service.get_yandex_link(playlist_id)
         
@@ -891,9 +889,8 @@ class CommandHandlers:
         await message.answer("⏳ Загружаю обложку...")
         
         # Скачиваем фото
-        bot = Bot.get_current()
-        file = await bot.get_file(photo.file_id)
-        image_bytes = await bot.download_file(file.file_path)
+        file = await message.bot.get_file(photo.file_id)
+        image_bytes = await message.bot.download_file(file.file_path)
         # Читаем байты из BytesIO
         image_file = image_bytes.read() if hasattr(image_bytes, 'read') else image_bytes
         
@@ -968,11 +965,9 @@ class CommandHandlers:
         payment_service = PaymentService(self.db)
         payment = await asyncio.to_thread(self.db.get_payment_by_payload, pre_checkout_query.invoice_payload)
         
-        bot = Bot.get_current()
-        
         if not payment or payment['status'] != 'pending':
             # Отклоняем платеж
-            await bot.answer_pre_checkout_query(
+            await pre_checkout_query.bot.answer_pre_checkout_query(
                 pre_checkout_query_id=pre_checkout_query.id,
                 ok=False,
                 error_message="Платеж не найден или уже обработан"
@@ -981,7 +976,7 @@ class CommandHandlers:
         
         # Проверяем сумму
         if payment['stars_amount'] != pre_checkout_query.total_amount:
-            await bot.answer_pre_checkout_query(
+            await pre_checkout_query.bot.answer_pre_checkout_query(
                 pre_checkout_query_id=pre_checkout_query.id,
                 ok=False,
                 error_message="Сумма платежа не совпадает"
@@ -989,7 +984,7 @@ class CommandHandlers:
             return
         
         # Подтверждаем платеж
-        await bot.answer_pre_checkout_query(
+        await pre_checkout_query.bot.answer_pre_checkout_query(
             pre_checkout_query_id=pre_checkout_query.id,
             ok=True
         )

@@ -74,14 +74,32 @@ bot_instance: Bot = None
 dp_instance: Dispatcher = None
 
 
-async def error_handler(event, exception):
-    """Обработчик ошибок."""
+async def error_handler(event, data):
+    """Обработчик ошибок для aiogram 3.x."""
+    # В aiogram 3.x обработчик ошибок вызывается с (event, data), где data - kwargs словарь
+    exception = data.get('exception') if isinstance(data, dict) else (data if data else None)
+    
+    # Если exception не найден в data, пытаемся получить его из других источников
+    if not exception and isinstance(data, dict):
+        # В aiogram 3.x exception может быть передан как отдельный ключ
+        exception = data.get('exception') or data.get('error')
+    
     logger.error(f"Ошибка при обработке обновления: {exception}", exc_info=exception)
     try:
         from utils.message_helpers import send_message, GENERAL_ERROR
+        from aiogram.types import Update
+        
         # Если это сообщение, пытаемся отправить ошибку
-        if isinstance(event, Message):
-            await send_message(event, GENERAL_ERROR, use_main_menu=True)
+        message = None
+        if event:
+            # В aiogram 3.x event может быть Update или Message
+            if isinstance(event, Update) and event.message:
+                message = event.message
+            elif isinstance(event, Message):
+                message = event
+        
+        if message:
+            await send_message(message, GENERAL_ERROR, use_main_menu=True)
     except Exception as e:
         logger.error(f"Ошибка при отправке сообщения об ошибке: {e}")
 
@@ -109,11 +127,11 @@ async def main():
         
         # Создаем Bot и Dispatcher
         bot_instance = Bot(token=TELEGRAM_TOKEN)
-        Bot.set_current(bot_instance)  # Устанавливаем текущий bot для использования в обработчиках
         storage = MemoryStorage()
         dp_instance = Dispatcher(storage=storage)
         
         # Регистрируем обработчик ошибок
+        # В aiogram 3.x обработчик ошибок принимает update и exception
         dp_instance.errors.register(error_handler)
         
         # === Регистрация обработчиков команд ===
@@ -265,7 +283,7 @@ async def main():
         # FSM состояния обрабатываются первыми, поэтому этот обработчик сработает только если пользователь НЕ находится в состоянии FSM
         dp_instance.message.register(
             message_handlers.add_command,
-            F.text & ~F.text.in_(menu_buttons) & ~Command()
+            F.text & ~F.text.in_(menu_buttons) & ~F.text.startswith('/')
         )
         
         logger.info("Начинаю polling...")
