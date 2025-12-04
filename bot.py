@@ -72,7 +72,7 @@ context_manager = UserContextManager(db)
 
 # === Инициализация обработчиков ===
 command_handlers = CommandHandlers(db, client_manager, context_manager)
-callback_handlers = CallbackHandlers(db, context_manager)
+callback_handlers = CallbackHandlers(db, context_manager, client_manager)
 message_handlers = MessageHandlers(db, client_manager, context_manager)
 
 # Глобальные переменные для корректного завершения
@@ -80,20 +80,31 @@ bot_instance: Bot = None
 dp_instance: Dispatcher = None
 
 
-async def error_handler(event, data):
+async def error_handler(event, *args, **kwargs):
     """Обработчик ошибок для aiogram 3.x."""
-    # В aiogram 3.x обработчик ошибок вызывается с (event, data), где data - kwargs словарь
-    exception = data.get('exception') if isinstance(data, dict) else (data if data else None)
+    # В aiogram 3.x обработчик ошибок может вызываться по-разному в зависимости от версии
+    exception = None
     
-    # Если exception не найден в data, пытаемся получить его из других источников
-    if not exception and isinstance(data, dict):
-        # В aiogram 3.x exception может быть передан как отдельный ключ
-        exception = data.get('exception') or data.get('error')
+    # Пытаемся получить exception из разных источников
+    # 1. Из kwargs (если передается как keyword argument)
+    if 'exception' in kwargs:
+        exception = kwargs['exception']
+    elif 'error' in kwargs:
+        exception = kwargs['error']
+    # 2. Из первого позиционного аргумента после event
+    elif len(args) > 0:
+        if isinstance(args[0], Exception):
+            exception = args[0]
+        elif isinstance(args[0], dict):
+            exception = args[0].get('exception') or args[0].get('error')
+    # 3. Из атрибута event
+    elif hasattr(event, 'exception'):
+        exception = event.exception
     
     logger.error(f"Ошибка при обработке обновления: {exception}", exc_info=exception)
     try:
         from utils.message_helpers import send_message, GENERAL_ERROR
-        from aiogram.types import Update
+        from aiogram.types import Update, Message
         
         # Если это сообщение, пытаемся отправить ошибку
         message = None
