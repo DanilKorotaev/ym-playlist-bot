@@ -202,7 +202,7 @@ class MessageHandlers:
                 tr_id, album_id = yandex_service.extract_track_info(item)
                 if tr_id is None or album_id is None:
                     continue
-                ok, err = self.playlist_service.add_track(playlist_id, tr_id, album_id, telegram_id)
+                ok, err = await self.playlist_service.add_track(playlist_id, tr_id, album_id, telegram_id)
                 if ok:
                     added += 1
             
@@ -235,7 +235,7 @@ class MessageHandlers:
                 tr_id, album_id = yandex_service.extract_track_info(t)
                 if tr_id is None or album_id is None:
                     continue
-                ok, err = self.playlist_service.add_track(playlist_id, tr_id, album_id, telegram_id)
+                ok, err = await self.playlist_service.add_track(playlist_id, tr_id, album_id, telegram_id)
                 if ok:
                     added += 1
             

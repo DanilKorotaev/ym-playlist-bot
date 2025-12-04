@@ -43,6 +43,9 @@ logger = logging.getLogger(__name__)
 DEFAULT_PLAYLIST_LIMIT = 2
 PLAYLIST_LIMIT = int(os.getenv("PLAYLIST_LIMIT", DEFAULT_PLAYLIST_LIMIT))
 
+# Размер страницы для пагинации списка треков
+TRACKS_PER_PAGE = 12
+
 
 class CommandHandlers:
     """Класс с обработчиками команд бота."""
@@ -416,8 +419,69 @@ class CommandHandlers:
                 link_preview_options=LinkPreviewOptions(is_disabled=True)
             )
     
-    async def show_list(self, message: Message):
-        """Команда /list."""
+    def _format_tracks_page(
+        self,
+        tracks: list,
+        page: int,
+        playlist_title: str,
+        playlist_id: int,
+        yandex_service: YandexService
+    ) -> tuple[str, InlineKeyboardMarkup]:
+        """
+        Форматирует страницу треков с пагинацией.
+        
+        Args:
+            tracks: Список треков
+            page: Номер страницы (начиная с 1)
+            playlist_title: Название плейлиста
+            playlist_id: ID плейлиста для callback_data
+            yandex_service: Сервис для форматирования треков
+            
+        Returns:
+            Кортеж (текст сообщения, клавиатура пагинации)
+        """
+        total_tracks = len(tracks)
+        total_pages = (total_tracks + TRACKS_PER_PAGE - 1) // TRACKS_PER_PAGE
+        
+        # Вычисляем индексы для текущей страницы
+        start_idx = (page - 1) * TRACKS_PER_PAGE
+        end_idx = min(start_idx + TRACKS_PER_PAGE, total_tracks)
+        
+        # Формируем заголовок
+        lines = [f"🎵 {playlist_title} ({total_tracks} треков)\n"]
+        lines.append(f"📄 Страница {page} из {total_pages}\n")
+        
+        # Добавляем треки текущей страницы
+        page_tracks = tracks[start_idx:end_idx]
+        for i, item in enumerate(page_tracks, start=start_idx + 1):
+            track_display = yandex_service.format_track(item)
+            lines.append(f"{i}. {track_display}")
+        
+        text = "\n".join(lines)
+        
+        # Создаем клавиатуру пагинации
+        keyboard = []
+        if total_pages > 1:
+            nav_buttons = []
+            if page > 1:
+                nav_buttons.append(InlineKeyboardButton(
+                    text="◀️ Назад",
+                    callback_data=f"list_page_{playlist_id}_{page - 1}"
+                ))
+            if page < total_pages:
+                nav_buttons.append(InlineKeyboardButton(
+                    text="Вперед ▶️",
+                    callback_data=f"list_page_{playlist_id}_{page + 1}"
+                ))
+            if nav_buttons:
+                keyboard.append(nav_buttons)
+        
+        reply_markup = InlineKeyboardMarkup(inline_keyboard=keyboard) if keyboard else None
+        
+        return text, reply_markup
+    
+    async def show_list(self, message: Message, page: int = 1):
+        """Команда /list с поддержкой пагинации."""
         telegram_id = message.from_user.id
         await self.db.ensure_user(telegram_id, message.from_user.username)
         
@@ -454,21 +518,14 @@ class CommandHandlers:
             )
             return
         
-        title = playlist.get("title") or "Плейлист"
-        lines = [f"🎵 {title} ({len(tracks)} треков):\n"]
-        
         # Получаем клиент для создания YandexService
         client = await self.client_manager.get_client_for_playlist(playlist_id)
         yandex_service = YandexService(client)
         
-        for i, item in enumerate(tracks, start=1):
-            track_display = yandex_service.format_track(item)
-            lines.append(f"{i}. {track_display}")
+        title = playlist.get("title") or "Плейлист"
+        text, reply_markup = self._format_tracks_page(tracks, page, title, playlist_id, yandex_service)
         
-        chunk = 50
-        for i in range(0, len(lines), chunk):
-            part = "\n".join(lines[i:i+chunk])
-            await message.answer(part)
+        await message.answer(text, reply_markup=reply_markup)
     
     async def set_token_start(self, message: Message, state: FSMContext):
         """Начало установки токена (FSM)."""
