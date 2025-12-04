@@ -341,13 +341,14 @@ class PlaylistService:
         
         return False, error or "Ошибка изменения имени плейлиста"
     
-    async def get_playlist_cover_url(self, playlist_id: int, telegram_id: int) -> Optional[str]:
+    async def get_playlist_cover_url(self, playlist_id: int, telegram_id: int, only_custom: bool = True) -> Optional[str]:
         """
         Получить URL обложки плейлиста из БД или API.
         
         Args:
             playlist_id: ID плейлиста в БД
             telegram_id: ID пользователя Telegram (не используется, но оставлен для совместимости)
+            only_custom: Если True, возвращать URL только для пользовательских обложек (custom=True)
             
         Returns:
             URL обложки или None, если обложка не найдена
@@ -356,22 +357,53 @@ class PlaylistService:
         if not playlist:
             return None
         
-        # Сначала проверяем, есть ли сохраненный URL в БД
-        cover_url = playlist.get("cover_url")
-        if cover_url:
-            return cover_url
+        # Сначала проверяем, есть ли сохраненный URL в БД (только если нужна custom обложка)
+        if only_custom:
+            cover_url = playlist.get("cover_url")
+            if cover_url:
+                return cover_url
         
-        # Если нет в БД, получаем из API
+        # Если нет в БД или нужна любая обложка, получаем из API
         client = await self.client_manager.get_client_for_playlist(playlist_id)
         yandex_service = YandexService(client)
         
         playlist_kind = playlist["playlist_kind"]
         owner_id = playlist["owner_id"]
         
-        # Используем метод из YandexService (только пользовательские обложки, обертываем синхронный вызов)
+        # Используем метод из YandexService (обертываем синхронный вызов)
         return await asyncio.to_thread(
-            yandex_service.get_playlist_cover_url, playlist_kind, owner_id, only_custom=True
+            yandex_service.get_playlist_cover_url, playlist_kind, owner_id, only_custom=only_custom
         )
+    
+    async def get_playlist_cover_image(self, playlist_id: int, telegram_id: int) -> Optional[bytes]:
+        """
+        Получить изображение обложки плейлиста в виде байтов.
+        
+        Args:
+            playlist_id: ID плейлиста в БД
+            telegram_id: ID пользователя Telegram (не используется, но оставлен для совместимости)
+            
+        Returns:
+            Байты изображения или None, если обложка не найдена
+        """
+        # Получаем URL обложки (любую, не только custom)
+        cover_url = await self.get_playlist_cover_url(playlist_id, telegram_id, only_custom=False)
+        logger.debug(f"Получен URL обложки для плейлиста {playlist_id}: {cover_url}")
+        if not cover_url:
+            logger.debug(f"URL обложки не найден для плейлиста {playlist_id}")
+            return None
+        
+        # Получаем клиент и создаем сервис для работы с API
+        client = await self.client_manager.get_client_for_playlist(playlist_id)
+        yandex_service = YandexService(client)
+        
+        # Скачиваем обложку с авторизацией (обертываем синхронный вызов)
+        result = await asyncio.to_thread(yandex_service.download_playlist_cover, cover_url)
+        if result:
+            logger.debug(f"Обложка успешно получена для плейлиста {playlist_id}, размер: {len(result)} байт")
+        else:
+            logger.debug(f"Не удалось получить обложку для плейлиста {playlist_id}")
+        return result
     
     async def sync_playlist_from_api(self, playlist_id: int, telegram_id: int) -> Tuple[bool, Optional[str]]:
         """

@@ -6,7 +6,7 @@ import os
 import asyncio
 from typing import Optional
 from aiogram import Bot
-from aiogram.types import Message, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, PreCheckoutQuery, SuccessfulPayment
+from aiogram.types import Message, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, PreCheckoutQuery, SuccessfulPayment, BufferedInputFile, LinkPreviewOptions
 from aiogram.fsm.context import FSMContext
 
 from database import DatabaseInterface
@@ -391,10 +391,30 @@ class CommandHandlers:
         
         reply_markup = InlineKeyboardMarkup(inline_keyboard=keyboard) if keyboard else None
         
-        await message.answer(
-            "\n".join(lines),
-            reply_markup=reply_markup
-        )
+        # Пытаемся получить URL обложки плейлиста для превью
+        cover_url = await self.playlist_service.get_playlist_cover_url(playlist_id, telegram_id, only_custom=False)
+        
+        # Формируем текст сообщения
+        text_content = "\n".join(lines)
+        
+        # Если есть URL обложки, добавляем невидимую ссылку для превью
+        if cover_url:
+            # Добавляем невидимую ссылку в конец текста (zero-width space)
+            text_content += f'\n<a href="{cover_url}">&#8203;</a>'
+            # Используем HTML-разметку и включаем превью для этой ссылки
+            await message.answer(
+                text_content,
+                reply_markup=reply_markup,
+                parse_mode="HTML",
+                link_preview_options=LinkPreviewOptions(url=cover_url, prefer_large_media=True)
+            )
+        else:
+            # Если обложки нет, отправляем текст с отключенным превью ссылок
+            await message.answer(
+                text_content,
+                reply_markup=reply_markup,
+                link_preview_options=LinkPreviewOptions(is_disabled=True)
+            )
     
     async def show_list(self, message: Message):
         """Команда /list."""

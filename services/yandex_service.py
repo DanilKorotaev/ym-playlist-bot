@@ -659,56 +659,145 @@ class YandexService:
         Returns:
             URL обложки или None, если обложка не найдена или не является пользовательской
         """
+        logger.debug(f"Получение URL обложки для плейлиста {playlist_id}, owner={owner}, only_custom={only_custom}")
         pl_obj, err = self.get_playlist(playlist_id, owner)
         if pl_obj is None:
+            logger.debug(f"Плейлист {playlist_id} не найден: {err}")
             return None
         
         # Пытаемся получить обложку из различных атрибутов
         cover = getattr(pl_obj, "cover", None)
+        logger.debug(f"Атрибут cover для плейлиста {playlist_id}: {cover is not None}")
         if cover:
             # Проверяем, является ли обложка пользовательской (custom)
             is_custom = getattr(cover, "custom", False)
+            logger.debug(f"Обложка custom для плейлиста {playlist_id}: {is_custom}, only_custom={only_custom}")
             if only_custom and not is_custom:
                 # Если нужна только пользовательская, а эта не пользовательская - возвращаем None
+                logger.debug(f"Пропускаем обложку (не custom, а требуется only_custom=True)")
                 return None
             
             # Обложка может быть объектом с различными размерами
+            logger.debug(f"Проверка cover.uri для плейлиста {playlist_id}: hasattr={hasattr(cover, 'uri')}")
             if hasattr(cover, "uri"):
                 # Формируем полный URL
                 uri = cover.uri
+                logger.debug(f"cover.uri для плейлиста {playlist_id}: {uri}")
+                if not uri:
+                    logger.debug(f"cover.uri пустой для плейлиста {playlist_id}")
+                    return None
+                # Заменяем %% на конкретный размер (300x300 для Telegram)
+                uri = uri.replace("%%", "300x300")
+                logger.debug(f"Обработан URI обложки из cover.uri: {uri}")
                 if uri.startswith("//"):
-                    return f"https:{uri}"
+                    result = f"https:{uri}"
+                    logger.debug(f"Возвращаем URL обложки (протокол-относительный): {result}")
+                    return result
                 elif uri.startswith("/"):
-                    return f"https://music.yandex.ru{uri}"
+                    result = f"https://music.yandex.ru{uri}"
+                    logger.debug(f"Возвращаем URL обложки (относительный путь): {result}")
+                    return result
+                elif uri.startswith("http://") or uri.startswith("https://"):
+                    logger.debug(f"Возвращаем URL обложки (полный): {uri}")
+                    return uri
+                elif not uri.startswith("/") and "." in uri.split("/")[0]:  # Если начинается с домена (например, avatars.yandex.net)
+                    result = f"https://{uri}"
+                    logger.debug(f"Возвращаем URL обложки (домен без схемы): {result}")
+                    return result
+                logger.debug(f"Возвращаем URI обложки как есть: {uri}")
                 return uri
             elif hasattr(cover, "items") and cover.items:
                 # Может быть список обложек (мозаика)
                 # Для мозаики обычно custom = False, поэтому если only_custom = True, не возвращаем
+                logger.debug(f"Найдена мозаика обложек для плейлиста {playlist_id}, количество items: {len(cover.items) if cover.items else 0}")
                 if only_custom:
+                    logger.debug(f"Пропускаем мозаику (only_custom=True)")
                     return None
                 first_item = cover.items[0]
                 if hasattr(first_item, "uri"):
                     uri = first_item.uri
+                    if not uri:
+                        return None
+                    # Заменяем %% на конкретный размер (300x300 для Telegram)
+                    uri = uri.replace("%%", "300x300")
+                    logger.debug(f"Обработан URI обложки из items: {uri}")
                     if uri.startswith("//"):
-                        return f"https:{uri}"
+                        result = f"https:{uri}"
+                        logger.debug(f"Возвращаем URL обложки (протокол-относительный): {result}")
+                        return result
                     elif uri.startswith("/"):
-                        return f"https://music.yandex.ru{uri}"
+                        result = f"https://music.yandex.ru{uri}"
+                        logger.debug(f"Возвращаем URL обложки (относительный путь): {result}")
+                        return result
+                    elif uri.startswith("http://") or uri.startswith("https://"):
+                        logger.debug(f"Возвращаем URL обложки (полный): {uri}")
+                        return uri
+                    elif not uri.startswith("/") and "." in uri.split("/")[0]:  # Если начинается с домена (например, avatars.yandex.net)
+                        result = f"https://{uri}"
+                        logger.debug(f"Возвращаем URL обложки (домен без схемы): {result}")
+                        return result
+                    logger.debug(f"Возвращаем URI обложки как есть: {uri}")
                     return uri
+        else:
+            logger.debug(f"Атрибут cover отсутствует или пустой для плейлиста {playlist_id}")
         
         # Пробуем другие возможные атрибуты (og_image и т.д.)
         # Но только если не требуется только custom
+        logger.debug(f"Проверка других атрибутов для плейлиста {playlist_id}, only_custom={only_custom}")
         if not only_custom:
             for attr_name in ["cover_uri", "og_image", "image"]:
                 attr = getattr(pl_obj, attr_name, None)
+                logger.debug(f"Атрибут {attr_name} для плейлиста {playlist_id}: {attr is not None}, значение: {attr if isinstance(attr, str) else type(attr)}")
                 if attr:
-                    if isinstance(attr, str):
+                    if isinstance(attr, str) and attr:
+                        # Заменяем %% на конкретный размер (300x300 для Telegram)
+                        attr = attr.replace("%%", "300x300")
+                        logger.debug(f"Обработан атрибут {attr_name} обложки: {attr}")
                         if attr.startswith("//"):
                             return f"https:{attr}"
                         elif attr.startswith("/"):
                             return f"https://music.yandex.ru{attr}"
+                        elif attr.startswith("http://") or attr.startswith("https://"):
+                            return attr
+                        elif not attr.startswith("/") and "." in attr.split("/")[0]:  # Если начинается с домена (например, avatars.yandex.net)
+                            result = f"https://{attr}"
+                            logger.debug(f"Возвращаем URL обложки из {attr_name} (домен без схемы): {result}")
+                            return result
+                        logger.debug(f"Возвращаем атрибут {attr_name} обложки как есть: {attr}")
                         return attr
         
+        logger.debug(f"Обложка не найдена для плейлиста {playlist_id}")
         return None
+    
+    def download_playlist_cover(self, cover_url: str) -> Optional[bytes]:
+        """
+        Скачать обложку плейлиста по URL с авторизацией.
+        
+        Args:
+            cover_url: URL обложки плейлиста
+            
+        Returns:
+            Байты изображения или None при ошибке
+        """
+        try:
+            logger.debug(f"Попытка скачать обложку по URL: {cover_url}")
+            # Используем заголовки авторизации из клиента
+            headers = self.client._request.headers.copy()
+            
+            # Скачиваем изображение
+            response = requests.get(cover_url, headers=headers, timeout=10)
+            
+            logger.debug(f"Ответ при скачивании обложки: статус {response.status_code}, размер контента: {len(response.content) if response.content else 0} байт")
+            
+            if response.status_code == 200:
+                logger.debug(f"Обложка успешно скачана, размер: {len(response.content)} байт")
+                return response.content
+            else:
+                logger.warning(f"Ошибка скачивания обложки: статус {response.status_code}, ответ: {response.text[:200]}")
+                return None
+        except Exception as e:
+            logger.warning(f"Ошибка при скачивании обложки: {e}", exc_info=True)
+            return None
     
     def get_playlist_info_for_sync(self, playlist_id: str, owner: Optional[str] = None) -> Tuple[Optional[str], Optional[str], Optional[str], Optional[str]]:
         """
