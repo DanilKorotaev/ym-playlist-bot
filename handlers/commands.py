@@ -607,7 +607,7 @@ class CommandHandlers:
             state_data = await state.get_data()
             playlist_id = state_data.get('edit_playlist_id')
         
-        self.db.ensure_user(telegram_id, message.from_user.username if hasattr(message.from_user, 'username') else None)
+        await self.db.ensure_user(telegram_id, message.from_user.username if hasattr(message.from_user, 'username') else None)
         
         # FSM диалог
         if not playlist_id:
@@ -617,12 +617,12 @@ class CommandHandlers:
             return
         
         # Проверяем, что плейлист существует
-        playlist = self.db.get_playlist(playlist_id)
+        playlist = await self.db.get_playlist(playlist_id)
         if not playlist:
             await send_message(message, PLAYLIST_NOT_FOUND, use_main_menu=True)
             return
         
-        if not self.db.is_playlist_creator(playlist_id, telegram_id):
+        if not await self.db.is_playlist_creator(playlist_id, telegram_id):
             await send_message(message, ONLY_CREATOR_CAN_CHANGE_NAME, use_main_menu=True)
             return
         
@@ -793,7 +793,7 @@ class CommandHandlers:
         # Сохраняем playlist_id в состоянии FSM
         await state.update_data(delete_track_playlist_id=playlist_id, delete_track_total=total)
         
-        playlist = self.db.get_playlist(playlist_id)
+        playlist = await self.db.get_playlist(playlist_id)
         playlist_title = playlist.get("title") or "плейлист" if playlist else "плейлист"
         
         await message.answer(
@@ -907,7 +907,7 @@ class CommandHandlers:
         """Начало установки обложки (FSM)."""
         telegram_id = query.from_user.id
         message = query.message
-        self.db.ensure_user(telegram_id, query.from_user.username)
+        await self.db.ensure_user(telegram_id, query.from_user.username)
         
         # Извлекаем playlist_id из callback_data
         data = query.data
@@ -931,12 +931,12 @@ class CommandHandlers:
             return
         
         # Проверяем, что плейлист существует
-        playlist = self.db.get_playlist(playlist_id)
+        playlist = await self.db.get_playlist(playlist_id)
         if not playlist:
             await send_message(message, PLAYLIST_NOT_FOUND, use_main_menu=True)
             return
         
-        if not self.db.is_playlist_creator(playlist_id, telegram_id):
+        if not await self.db.is_playlist_creator(playlist_id, telegram_id):
             await send_message(message, ONLY_CREATOR_CAN_CHANGE_COVER, use_main_menu=True)
             return
         
