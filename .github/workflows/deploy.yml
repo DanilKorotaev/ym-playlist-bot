@@ -1,0 +1,119 @@
+name: Deploy to Production
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*'  # Развертывание при создании тега v4.0.0, v4.1.0 и т.д.
+  workflow_dispatch:  # Ручной запуск
+
+env:
+  DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Setup SSH
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.DEPLOY_SSH_KEY }}
+      
+      - name: Deploy to server
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          port: ${{ secrets.DEPLOY_PORT || 22 }}
+          script: |
+            set -e  # Остановка при ошибке
+            
+            echo "🚀 Начало развертывания..."
+            
+            # Переход в директорию проекта
+            cd ${{ secrets.DEPLOY_PATH }}
+            
+            # Сохранение текущей версии (для отката)
+            CURRENT_VERSION=$(git rev-parse --short HEAD)
+            echo "📌 Текущая версия: $CURRENT_VERSION"
+            echo "$CURRENT_VERSION" > .deploy_version
+            
+            # Обновление кода
+            echo "📥 Обновление кода из репозитория..."
+            git fetch origin --tags
+            
+            # Определение версии для развертывания
+            if [[ "${{ github.ref }}" == refs/tags/* ]]; then
+              # Если это тег, используем его
+              DEPLOY_REF="${{ github.ref_name }}"
+              echo "📌 Развертывание релиза: ${{ github.ref_name }}"
+            else
+              # Иначе используем main
+              DEPLOY_REF="origin/main"
+              echo "📌 Развертывание из ветки main"
+            fi
+            
+            git reset --hard $DEPLOY_REF
+            git clean -fd
+            
+            # Проверка изменений
+            NEW_VERSION=$(git rev-parse --short HEAD)
+            echo "📌 Новая версия: $NEW_VERSION"
+            
+            # Сборка Docker-образа
+            echo "🔨 Сборка Docker-образа..."
+            docker compose build bot
+            
+            # Остановка старого контейнера
+            echo "⏹️ Остановка старого контейнера..."
+            docker compose stop bot || true
+            
+            # Удаление старого контейнера (опционально)
+            echo "🗑️ Удаление старого контейнера..."
+            docker compose rm -f bot || true
+            
+            # Запуск нового контейнера
+            echo "▶️ Запуск нового контейнера..."
+            docker compose up -d bot
+            
+            # Ожидание запуска контейнера
+            echo "⏳ Ожидание запуска контейнера..."
+            sleep 5
+            
+            # Проверка статуса контейнера
+            echo "✅ Проверка статуса контейнеров..."
+            docker compose ps
+            
+            # Проверка логов на ошибки
+            echo "📋 Проверка логов..."
+            if docker compose logs --tail=50 bot | grep -i "error\|exception\|traceback"; then
+              echo "⚠️ Обнаружены ошибки в логах!"
+              docker compose logs --tail=100 bot
+              exit 1
+            fi
+            
+            echo "✅ Развертывание завершено успешно!"
+            echo "📌 Версия: $NEW_VERSION"
+      
+      - name: Send notification (optional)
+        if: always()
+        continue-on-error: true  # Не прерывать workflow, если уведомления не настроены
+        uses: appleboy/telegram-action@v1.0.0
+        with:
+          to: ${{ secrets.TELEGRAM_NOTIFICATION_CHAT_ID }}
+          token: ${{ secrets.TELEGRAM_NOTIFICATION_TOKEN }}
+          message: |
+            ${{ job.status == 'success' && '✅' || '❌' }} Деплой завершен
+            
+            Статус: ${{ job.status }}
+            Версия: ${{ github.sha }}
+            Коммит: ${{ github.event.head_commit.message }}
+            Автор: ${{ github.event.head_commit.author.name }}
+
