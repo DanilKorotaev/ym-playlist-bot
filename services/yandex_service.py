@@ -97,25 +97,124 @@ class YandexService:
         Получить плейлист по ID и владельцу.
         
         Args:
-            playlist_id: ID плейлиста
+            playlist_id: ID плейлиста (может быть kind или UUID)
             owner: ID владельца (опционально)
             
         Returns:
             Кортеж (объект плейлиста, сообщение об ошибке)
         """
+        # Если owner указан, пробуем сначала с owner
         if owner:
             try:
                 pl = self.client.users_playlists(playlist_id, owner)
                 return pl, None
             except Exception as e:
-                logger.debug(f"users_playlists(pid,owner) failed: {e}")
+                logger.debug(f"users_playlists(pid={playlist_id}, owner={owner}) failed: {e}")
         
+        # Если owner не указан, но playlist_id выглядит как UUID (содержит дефисы),
+        # пробуем использовать веб-страницу для получения данных плейлиста
+        is_uuid = '-' in playlist_id and len(playlist_id) > 20
+        if is_uuid and not owner:
+            try:
+                # Пробуем получить данные через веб-страницу music.yandex.ru/playlists/{uuid}
+                # В HTML странице ищем uid (owner) и kind плейлиста напрямую
+                url = f"https://music.yandex.ru/playlists/{playlist_id}"
+                headers = {
+                    'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36',
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                }
+                # Добавляем заголовки авторизации из клиента, если они есть
+                client_headers = self.client._request.headers.copy()
+                if 'Authorization' in client_headers:
+                    headers['Authorization'] = client_headers['Authorization']
+                if 'Cookie' in client_headers:
+                    headers['Cookie'] = client_headers['Cookie']
+                
+                logger.debug(f"Пробуем получить данные через веб-страницу: {url}")
+                try:
+                    response = requests.get(url, headers=headers, timeout=30)
+                    logger.debug(f"Ответ веб-страницы: статус {response.status_code}")
+                    if response.status_code == 200:
+                        # Парсим HTML и ищем данные напрямую
+                        html_content = response.text
+                        import re
+                        
+                        owner_from_html = None
+                        kind_from_html = None
+                        
+                        # Ищем uid (owner) в HTML - это числовой идентификатор владельца
+                        uid_matches = re.findall(r'"uid"[:\s]*"?([0-9]+)"?', html_content)
+                        if uid_matches:
+                            # Берем первый найденный uid (обычно это owner плейлиста)
+                            owner_from_html = uid_matches[0]
+                            logger.debug(f"Найден uid (owner) в HTML: {owner_from_html}")
+                        
+                        # Ищем kind в HTML - это идентификатор плейлиста
+                        kind_matches = re.findall(r'"kind"[:\s]*"?([0-9]+)"?', html_content)
+                        if kind_matches:
+                            # Берем первый найденный kind
+                            kind_from_html = kind_matches[0]
+                            logger.debug(f"Найден kind в HTML: {kind_from_html}")
+                        
+                        # Если не нашли kind, пробуем найти playlist_kind
+                        if not kind_from_html:
+                            playlist_kind_matches = re.findall(r'"playlist_kind"[:\s]*"?([0-9]+)"?', html_content)
+                            if playlist_kind_matches:
+                                kind_from_html = playlist_kind_matches[0]
+                                logger.debug(f"Найден playlist_kind в HTML: {kind_from_html}")
+                        
+                        # Если нашли owner, пробуем использовать его для получения плейлиста
+                        if owner_from_html:
+                            try:
+                                # Используем kind, если нашли, иначе используем UUID
+                                playlist_id_to_use = kind_from_html if kind_from_html else playlist_id
+                                logger.debug(f"Пробуем получить плейлист с owner={owner_from_html}, playlist_id={playlist_id_to_use}")
+                                pl = self.client.users_playlists(playlist_id_to_use, owner_from_html)
+                                if pl:
+                                    logger.debug(f"Успешно получен плейлист с owner={owner_from_html}, playlist_id={playlist_id_to_use}")
+                                    return pl, None
+                            except Exception as e:
+                                logger.debug(f"Не удалось получить плейлист с owner из HTML: {e}")
+                                # Пробуем с UUID, если kind не сработал и мы использовали kind
+                                if kind_from_html and kind_from_html != playlist_id:
+                                    try:
+                                        logger.debug(f"Пробуем с UUID вместо kind: UUID={playlist_id}, owner={owner_from_html}")
+                                        pl = self.client.users_playlists(playlist_id, owner_from_html)
+                                        if pl:
+                                            logger.debug(f"Успешно получен плейлист с owner={owner_from_html}, UUID={playlist_id}")
+                                            return pl, None
+                                    except Exception as e2:
+                                        logger.debug(f"Не удалось получить плейлист с UUID и owner из HTML: {e2}")
+                        else:
+                            logger.debug(f"Не удалось найти owner в HTML странице для плейлиста {playlist_id}")
+                
+                except Exception as request_error:
+                    logger.debug(f"Ошибка запроса к веб-странице: {request_error}")
+            except Exception as e:
+                logger.debug(f"Ошибка при обработке UUID плейлиста: {e}")
+        
+        # Пробуем без owner (для kind плейлистов)
         try:
             pl = self.client.users_playlists(playlist_id)
             return pl, None
         except Exception as e:
-            logger.debug(f"users_playlists(pid) failed: {e}")
-            return None, f"Не удалось получить плейлист {playlist_id}"
+            logger.debug(f"users_playlists(pid={playlist_id}) failed: {e}")
+            # Формируем более понятное сообщение об ошибке
+            error_str = str(e).lower()
+            if "not-found" in error_str or "not found" in error_str:
+                if is_uuid:
+                    return None, (
+                        f"Не удалось получить плейлист по UUID {playlist_id}. "
+                        f"Для получения плейлиста по UUID требуется указать владельца. "
+                        f"Попробуйте использовать полную ссылку: "
+                        f"https://music.yandex.ru/users/{{owner}}/playlists/{{kind}}"
+                    )
+                else:
+                    return None, f"Плейлист {playlist_id} не найден. Проверьте правильность ссылки."
+            elif "forbidden" in error_str or "403" in error_str:
+                return None, "Недостаточно прав для доступа к плейлисту."
+            else:
+                return None, f"Не удалось получить плейлист {playlist_id}: {e}"
     
     def get_playlist_tracks(self, playlist_id: str, owner: Optional[str] = None) -> List[Any]:
         """
