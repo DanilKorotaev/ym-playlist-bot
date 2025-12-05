@@ -36,5 +36,5 @@
 ## Связанные файлы
 
 - `services/yandex_service.py` - работа с API
-- `docs/tasks/task-feature-notifications.md` - уведомления о новых треках
+- `docs/tasks/pending/task-feature-notifications.md` - уведомления о новых треках
 

@@ -2,7 +2,7 @@
 
 **Дата**: 2024  
 **Статус**: ✅ Завершено  
-**Связанная задача**: [task-research-playlist-moderation.md](../tasks/task-research-playlist-moderation.md)
+**Связанная задача**: [task-research-playlist-moderation.md](../tasks/pending/task-research-playlist-moderation.md)
 
 ## Цель исследования
 
