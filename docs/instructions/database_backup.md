@@ -70,13 +70,13 @@ docker exec ym_bot_postgres pg_dumpall -U postgres > all_databases_backup_$(date
 
 ```bash
 # Остановка PostgreSQL
-docker-compose stop postgres
+docker compose stop postgres
 
 # Создание архива volume
 docker run --rm -v ym_bot_postgres_data:/data -v $(pwd)/backups:/backup alpine tar czf /backup/physical_backup_$(date +%Y%m%d_%H%M%S).tar.gz /data
 
 # Запуск PostgreSQL
-docker-compose start postgres
+docker compose start postgres
 ```
 
 **Внимание**: Физический бекап требует остановки PostgreSQL и может быть несовместим между разными версиями.

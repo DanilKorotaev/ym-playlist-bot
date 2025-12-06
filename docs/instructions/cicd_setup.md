@@ -308,20 +308,11 @@ jobs:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_NOTIFICATION_TOKEN }}
 ```
 
-### 4.3. Альтернативный вариант с использованием docker-compose напрямую
+### 4.3. Важно: Использование Docker Compose V2
 
-Если на сервере установлен `docker-compose` (V1), используйте этот вариант:
+**⚠️ ВАЖНО:** Workflow использует команду `docker compose` (V2) с пробелом. Убедитесь, что на сервере установлен Docker Compose V2, а не старая версия `docker-compose` (V1).
 
-```yaml
-# В секции script замените docker compose на docker-compose
-script: |
-  cd ${{ secrets.DEPLOY_PATH }}
-  git pull origin main
-  docker-compose build bot
-  docker-compose stop bot
-  docker-compose up -d bot
-  docker-compose ps
-```
+Если на сервере установлена старая версия `docker-compose` (V1), установите Docker Compose V2 согласно инструкциям в разделе 5.1.
 
 ---
 
@@ -332,8 +323,53 @@ script: |
 **На сервере должны быть установлены:**
 - Git
 - Docker
-- Docker Compose (V2) или docker-compose (V1)
+- Docker Compose V2 (команда `docker compose`)
 - SSH сервер
+
+**⚠️ ВАЖНО:** Проект использует **Docker Compose V2** (команда `docker compose` с пробелом). Старая версия `docker-compose` (V1) не поддерживается.
+
+#### Установка Docker и Docker Compose V2
+
+**Для Ubuntu/Debian:**
+
+```bash
+# Обновление пакетов
+sudo apt update
+
+# Установка зависимостей
+sudo apt install -y ca-certificates curl gnupg lsb-release
+
+# Добавление официального GPG ключа Docker
+sudo mkdir -p /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+
+# Добавление репозитория Docker
+echo \
+  "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
+  $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+
+# Установка Docker Engine и Docker Compose V2
+sudo apt update
+sudo apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+
+# Запуск и автозапуск Docker
+sudo systemctl start docker
+sudo systemctl enable docker
+
+# Добавление пользователя в группу docker (чтобы не использовать sudo)
+sudo usermod -aG docker $USER
+
+# Выйдите и войдите снова, чтобы изменения вступили в силу
+# Или выполните:
+newgrp docker
+```
+
+**Удаление старой версии docker-compose (если установлена):**
+
+```bash
+# Удаление старой версии docker-compose (V1)
+sudo apt remove docker-compose  # Ubuntu/Debian
+```
 
 **Проверка установки:**
 
@@ -344,11 +380,33 @@ git --version
 # Проверка Docker
 docker --version
 
-# Проверка Docker Compose
-docker compose version  # V2
-# или
-docker-compose --version  # V1
+# Проверка Docker Compose V2 (должна быть команда с пробелом)
+docker compose version
+
+# Проверка, что Docker работает без sudo
+docker ps
+
+# Проверка, что docker-compose (V1) не установлена
+docker-compose --version  # Должна выдать ошибку "command not found"
 ```
+
+**Если команда `docker compose` не работает:**
+
+1. Убедитесь, что установлен пакет `docker-compose-plugin`:
+   ```bash
+   sudo apt install docker-compose-plugin  # Ubuntu/Debian
+   ```
+
+2. Проверьте, что Docker Compose V2 доступен:
+   ```bash
+   docker compose version
+   ```
+
+3. Если все еще не работает, перезапустите Docker:
+   ```bash
+   sudo systemctl restart docker
+   newgrp docker
+   ```
 
 ### 5.2. Настройка Git на сервере
 
@@ -835,7 +893,55 @@ docker compose logs --since 1h bot
 4. Проверьте, что пользователь существует и имеет доступ к директории
 5. Проверьте, что в workflow не используется `webfactory/ssh-agent` (он не нужен, если ключ без passphrase)
 
-### 12.3. Ошибка Docker команд
+### 12.3. Ошибка: docker: unknown command: docker compose
+
+**Проблема:** `docker: unknown command: docker compose` или `docker compose: command not found`
+
+**Причина:** На сервере установлена старая версия `docker-compose` (V1) или Docker Compose V2 не установлен.
+
+**Решение:**
+
+1. **Проверьте, какая версия установлена:**
+   ```bash
+   docker compose version  # Должна работать
+   docker-compose --version  # Если работает, значит установлена старая версия
+   ```
+
+2. **Установите Docker Compose V2:**
+   
+   **Для Ubuntu/Debian:**
+   ```bash
+   sudo apt update
+   sudo apt install docker-compose-plugin
+   ```
+   
+   **Для CentOS/RHEL:**
+   ```bash
+   sudo yum install docker-compose-plugin
+   ```
+
+3. **Удалите старую версию docker-compose (V1), если установлена:**
+   ```bash
+   sudo apt remove docker-compose  # Ubuntu/Debian
+   # или
+   sudo yum remove docker-compose  # CentOS/RHEL
+   ```
+
+4. **Проверьте установку:**
+   ```bash
+   docker compose version
+   # Должно вывести версию, например: Docker Compose version v2.24.0
+   ```
+
+5. **Если все еще не работает, перезапустите Docker:**
+   ```bash
+   sudo systemctl restart docker
+   newgrp docker
+   ```
+
+**Важно:** Проект использует только `docker compose` (V2) с пробелом. Команда `docker-compose` (V1) не поддерживается.
+
+### 12.4. Ошибка Docker команд
 
 **Проблема:** `permission denied while trying to connect to the Docker daemon socket`
 
@@ -843,8 +949,9 @@ docker compose logs --since 1h bot
 1. Добавьте пользователя в группу docker: `sudo usermod -aG docker $USER`
 2. Выйдите и войдите снова
 3. Проверьте права: `docker ps` (должно работать без sudo)
+4. Если используете root, убедитесь, что Docker запущен: `sudo systemctl start docker`
 
-### 12.4. Ошибка git pull
+### 12.5. Ошибка git pull
 
 **Проблема:** `error: Your local changes to the following files would be overwritten by merge`
 
@@ -853,7 +960,7 @@ docker compose logs --since 1h bot
 2. Или добавьте `git stash` перед `git pull`
 3. Или используйте `git fetch` и `git reset --hard origin/main`
 
-### 12.5. Контейнер не запускается
+### 12.6. Контейнер не запускается
 
 **Проблема:** Контейнер падает сразу после запуска
 
@@ -863,7 +970,7 @@ docker compose logs --since 1h bot
 3. Проверьте, что все зависимости установлены
 4. Проверьте, что база данных доступна
 
-### 12.6. Медленный деплой
+### 12.7. Медленный деплой
 
 **Проблема:** Деплой занимает слишком много времени
 

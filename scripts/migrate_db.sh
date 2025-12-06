@@ -36,7 +36,7 @@ export_db() {
     # Проверяем, запущен ли контейнер PostgreSQL
     if ! docker ps | grep -q "$POSTGRES_CONTAINER"; then
         echo -e "${RED}ОШИБКА: Контейнер PostgreSQL '$POSTGRES_CONTAINER' не запущен!${NC}"
-        echo "Запустите PostgreSQL: docker-compose up -d postgres"
+        echo "Запустите PostgreSQL: docker compose up -d postgres"
         exit 1
     fi
     
@@ -126,7 +126,7 @@ import_db() {
     # Проверяем, запущен ли контейнер PostgreSQL
     if ! docker ps | grep -q "$POSTGRES_CONTAINER"; then
         echo -e "${YELLOW}Контейнер PostgreSQL не запущен. Запускаем...${NC}"
-        docker-compose up -d postgres
+        docker compose up -d postgres
         
         # Ждем, пока PostgreSQL будет готов
         echo "Ожидание готовности PostgreSQL..."
@@ -156,7 +156,7 @@ import_db() {
     # Останавливаем бота (если запущен)
     if docker ps | grep -q "ym_bot"; then
         echo -e "${YELLOW}Остановка бота...${NC}"
-        docker-compose stop bot || true
+        docker compose stop bot || true
     fi
     
     # Восстанавливаем базу данных
@@ -199,7 +199,7 @@ import_db() {
         "
         
         echo -e "${GREEN}Миграция завершена успешно!${NC}"
-        echo "Можно запустить бота: docker-compose up -d"
+        echo "Можно запустить бота: docker compose up -d"
         
         exit 0
     else

@@ -61,7 +61,7 @@ fi
 # Проверяем, запущен ли контейнер PostgreSQL
 if ! docker ps | grep -q "$POSTGRES_CONTAINER"; then
     echo -e "${YELLOW}Контейнер PostgreSQL не запущен. Запускаем...${NC}"
-    docker-compose up -d postgres
+    docker compose up -d postgres
     
     # Ждем, пока PostgreSQL будет готов
     echo "Ожидание готовности PostgreSQL..."
@@ -91,7 +91,7 @@ fi
 # Останавливаем бота (если запущен)
 if docker ps | grep -q "ym_bot"; then
     echo -e "${YELLOW}Остановка бота...${NC}"
-    docker-compose stop bot || true
+    docker compose stop bot || true
 fi
 
 # Восстанавливаем базу данных
@@ -134,7 +134,7 @@ if docker exec -i "$POSTGRES_CONTAINER" psql -U "$POSTGRES_USER" "$POSTGRES_DB" 
     "
     
     echo -e "${GREEN}Восстановление завершено успешно!${NC}"
-    echo "Можно запустить бота: docker-compose up -d"
+    echo "Можно запустить бота: docker compose up -d"
     
     exit 0
 else

@@ -68,7 +68,7 @@ echo "Файл бекапа: $BACKUP_FILE"
 # Проверяем, запущен ли контейнер PostgreSQL
 if ! docker ps | grep -q "$POSTGRES_CONTAINER"; then
     echo -e "${RED}ОШИБКА: Контейнер PostgreSQL '$POSTGRES_CONTAINER' не запущен!${NC}"
-    echo "Запустите PostgreSQL: docker-compose up -d postgres"
+    echo "Запустите PostgreSQL: docker compose up -d postgres"
     exit 1
 fi
 

@@ -74,10 +74,10 @@ nano .env
 
 ```bash
 # Запускаем только PostgreSQL (без бота)
-docker-compose up -d postgres
+docker compose up -d postgres
 
 # Ждем, пока PostgreSQL будет готов
-docker-compose exec postgres pg_isready -U postgres
+docker compose exec postgres pg_isready -U postgres
 ```
 
 #### Шаг 5: Восстановление дампа
@@ -115,10 +115,10 @@ SELECT COUNT(*) FROM payments;
 
 ```bash
 # Запускаем все сервисы
-docker-compose up -d
+docker compose up -d
 
 # Проверяем логи бота
-docker-compose logs -f bot
+docker compose logs -f bot
 ```
 
 ### Метод 2: Прямая миграция через pg_dump/pg_restore (для серверов в одной сети)
@@ -151,7 +151,7 @@ docker exec -i ym_bot_postgres pg_restore -U postgres -d yandex_music_bot --clea
 
 ```bash
 # Останавливаем PostgreSQL
-docker-compose stop postgres
+docker compose stop postgres
 
 # Создаем архив volume
 docker run --rm -v ym_bot_postgres_data:/data -v $(pwd):/backup alpine tar czf /backup/postgres_data_backup.tar.gz /data
