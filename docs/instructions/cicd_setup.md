@@ -90,9 +90,9 @@ GitHub Actions — это встроенная платформа CI/CD от Git
 Для работы CI/CD необходимо настроить следующие секреты в GitHub:
 
 1. **`DEPLOY_HOST`** — IP-адрес или доменное имя сервера
-2. **`DEPLOY_USER`** — имя пользователя для SSH подключения
-3. **`DEPLOY_SSH_KEY`** — приватный SSH ключ для подключения к серверу
-4. **`DEPLOY_PATH`** — путь к директории проекта на сервере (например, `/home/user/ym-playlist-bot`)
+2. **`DEPLOY_USER`** — имя пользователя для SSH подключения 
+3. **`DEPLOY_SSH_KEY`** — приватный SSH ключ для подключения к серверу (БЕЗ passphrase!)
+4. **`DEPLOY_PATH`** — путь к директории проекта на сервере
 
 **Опциональные секреты:**
 - **`DEPLOY_PORT`** — SSH порт (по умолчанию: 22)
@@ -111,11 +111,18 @@ GitHub Actions — это встроенная платформа CI/CD от Git
 
 ### 3.3. Генерация SSH ключа для деплоя
 
-**На сервере:**
+**⚠️ ВАЖНО:** Для CI/CD необходимо создать SSH ключ **БЕЗ ПАРОЛЯ (passphrase)**! GitHub Actions не может вводить пароль в неинтерактивном режиме.
+
+**На сервере (подключитесь как root):**
 
 ```bash
-# Создайте SSH ключ специально для CI/CD (не используйте личный ключ!)
-ssh-keygen -t ed25519 -C "github-actions-deploy" -f ~/.ssh/github_actions_deploy
+# Создайте SSH ключ специально для CI/CD БЕЗ ПАРОЛЯ
+# При запросе passphrase просто нажмите Enter (оставьте пустым)
+ssh-keygen -t ed25519 -C "github-actions-deploy" -f ~/.ssh/github_actions_deploy -N ""
+
+# Убедитесь, что директория .ssh существует и имеет правильные права
+mkdir -p ~/.ssh
+chmod 700 ~/.ssh
 
 # Скопируйте публичный ключ в authorized_keys
 cat ~/.ssh/github_actions_deploy.pub >> ~/.ssh/authorized_keys
@@ -123,6 +130,15 @@ cat ~/.ssh/github_actions_deploy.pub >> ~/.ssh/authorized_keys
 # Установите правильные права доступа
 chmod 600 ~/.ssh/authorized_keys
 chmod 600 ~/.ssh/github_actions_deploy
+chmod 644 ~/.ssh/github_actions_deploy.pub
+```
+
+**Проверка ключа (опционально):**
+
+```bash
+# Проверьте, что ключ создан без passphrase
+ssh-keygen -y -f ~/.ssh/github_actions_deploy
+# Должно вывести публичный ключ без запроса пароля
 ```
 
 **В GitHub Secrets:**
@@ -131,9 +147,17 @@ chmod 600 ~/.ssh/github_actions_deploy
    ```bash
    cat ~/.ssh/github_actions_deploy
    ```
-2. Добавьте его в GitHub Secret `DEPLOY_SSH_KEY`
+2. Скопируйте **весь вывод**, включая строки `-----BEGIN OPENSSH PRIVATE KEY-----` и `-----END OPENSSH PRIVATE KEY-----`
+3. Добавьте его в GitHub Secret `DEPLOY_SSH_KEY`:
+   - Settings → Secrets and variables → Actions
+   - New repository secret
+   - Name: `DEPLOY_SSH_KEY`
+   - Value: вставьте весь приватный ключ
 
-**Важно:** Никогда не коммитьте приватные SSH ключи в репозиторий!
+**Важно:** 
+- Никогда не коммитьте приватные SSH ключи в репозиторий!
+- Ключ для CI/CD должен быть БЕЗ passphrase
+- Используйте отдельный ключ только для CI/CD, не ваш личный ключ
 
 ---
 
@@ -200,11 +224,6 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-      
-      - name: Setup SSH
-        uses: webfactory/ssh-agent@v0.9.0
-        with:
-          ssh-private-key: ${{ secrets.DEPLOY_SSH_KEY }}
       
       - name: Deploy to server
         uses: appleboy/ssh-action@v1.0.0
@@ -778,17 +797,45 @@ docker compose logs --since 1h bot
 
 ## 12. Устранение неполадок
 
-### 12.1. Ошибка подключения по SSH
+### 12.1. Ошибка с passphrase SSH ключа
+
+**Проблема:** `Enter passphrase for (stdin):` или `Error: Command failed: ssh-add -`
+
+**Причина:** SSH ключ защищен паролем (passphrase), а GitHub Actions не может ввести пароль в неинтерактивном режиме.
+
+**Решение:**
+1. Создайте новый SSH ключ **БЕЗ passphrase** специально для CI/CD:
+   ```bash
+   ssh-keygen -t ed25519 -C "github-actions-deploy" -f ~/.ssh/github_actions_deploy -N ""
+   ```
+   При запросе passphrase просто нажмите Enter (оставьте пустым).
+
+2. Добавьте публичный ключ на сервер:
+   ```bash
+   cat ~/.ssh/github_actions_deploy.pub >> ~/.ssh/authorized_keys
+   chmod 600 ~/.ssh/authorized_keys
+   ```
+
+3. Обновите GitHub Secret `DEPLOY_SSH_KEY` новым приватным ключом:
+   ```bash
+   cat ~/.ssh/github_actions_deploy
+   ```
+   Скопируйте весь вывод и вставьте в GitHub Secrets.
+
+**Важно:** Для CI/CD всегда используйте ключи без passphrase. Безопасность обеспечивается хранением ключа в GitHub Secrets, а не паролем.
+
+### 12.2. Ошибка подключения по SSH
 
 **Проблема:** `Permission denied (publickey)`
 
 **Решения:**
-1. Проверьте, что SSH ключ добавлен в GitHub Secrets
+1. Проверьте, что SSH ключ добавлен в GitHub Secrets (БЕЗ passphrase!)
 2. Проверьте, что публичный ключ добавлен в `~/.ssh/authorized_keys` на сервере
-3. Проверьте права доступа: `chmod 600 ~/.ssh/authorized_keys`
+3. Проверьте права доступа: `chmod 600 ~/.ssh/authorized_keys` и `chmod 700 ~/.ssh`
 4. Проверьте, что пользователь существует и имеет доступ к директории
+5. Проверьте, что в workflow не используется `webfactory/ssh-agent` (он не нужен, если ключ без passphrase)
 
-### 12.2. Ошибка Docker команд
+### 12.3. Ошибка Docker команд
 
 **Проблема:** `permission denied while trying to connect to the Docker daemon socket`
 
@@ -797,7 +844,7 @@ docker compose logs --since 1h bot
 2. Выйдите и войдите снова
 3. Проверьте права: `docker ps` (должно работать без sudo)
 
-### 12.3. Ошибка git pull
+### 12.4. Ошибка git pull
 
 **Проблема:** `error: Your local changes to the following files would be overwritten by merge`
 
@@ -806,7 +853,7 @@ docker compose logs --since 1h bot
 2. Или добавьте `git stash` перед `git pull`
 3. Или используйте `git fetch` и `git reset --hard origin/main`
 
-### 12.4. Контейнер не запускается
+### 12.5. Контейнер не запускается
 
 **Проблема:** Контейнер падает сразу после запуска
 
@@ -816,7 +863,7 @@ docker compose logs --since 1h bot
 3. Проверьте, что все зависимости установлены
 4. Проверьте, что база данных доступна
 
-### 12.5. Медленный деплой
+### 12.6. Медленный деплой
 
 **Проблема:** Деплой занимает слишком много времени
 
