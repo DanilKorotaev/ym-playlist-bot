@@ -941,7 +941,108 @@ docker compose logs --since 1h bot
 
 **Важно:** Проект использует только `docker compose` (V2) с пробелом. Команда `docker-compose` (V1) не поддерживается.
 
-### 12.4. Ошибка Docker команд
+### 12.4. Ошибка: Docker service failed to start
+
+**Проблема:** `Job for docker.service failed because the control process exited with error code`
+
+**Диагностика:**
+
+1. **Проверьте статус сервиса:**
+   ```bash
+   sudo systemctl status docker.service
+   ```
+
+2. **Просмотрите подробные логи:**
+   ```bash
+   sudo journalctl -xeu docker.service
+   ```
+
+3. **Проверьте конфигурацию Docker:**
+   ```bash
+   sudo dockerd --validate
+   ```
+
+**Частые причины и решения:**
+
+**Причина 1: Конфликт с другими контейнерными системами (containerd, podman)**
+```bash
+# Проверьте, не запущены ли другие контейнерные системы
+sudo systemctl status containerd
+sudo systemctl status podman
+
+# Если запущены, остановите их
+sudo systemctl stop containerd
+sudo systemctl disable containerd
+```
+
+**Причина 2: Проблемы с cgroup или AppArmor (Ubuntu)**
+```bash
+# Проверьте AppArmor
+sudo systemctl status apparmor
+
+# Если есть проблемы, перезапустите AppArmor
+sudo systemctl restart apparmor
+```
+
+**Причина 3: Проблемы с конфигурацией Docker**
+```bash
+# Проверьте файл конфигурации
+sudo cat /etc/docker/daemon.json
+
+# Если файл поврежден, создайте резервную копию и удалите
+sudo mv /etc/docker/daemon.json /etc/docker/daemon.json.bak
+```
+
+**Причина 4: Проблемы с сокетом Docker**
+```bash
+# Проверьте, не занят ли сокет
+sudo lsof /var/run/docker.sock
+
+# Если занят, остановите процесс и перезапустите Docker
+sudo systemctl stop docker
+sudo rm -f /var/run/docker.sock
+sudo systemctl start docker
+```
+
+**Причина 5: Проблемы с зависимостями**
+```bash
+# Переустановите Docker
+sudo apt remove docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+sudo apt autoremove
+sudo apt update
+sudo apt install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+```
+
+**Причина 6: Проблемы с iptables (часто на VPS)**
+```bash
+# Проверьте iptables
+sudo iptables -L
+
+# Если есть проблемы, сбросьте правила (осторожно!)
+sudo iptables -F
+sudo iptables -X
+sudo systemctl restart docker
+```
+
+**Общее решение (если ничего не помогло):**
+
+```bash
+# Полная переустановка Docker
+sudo systemctl stop docker
+sudo systemctl disable docker
+sudo apt remove docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+sudo apt autoremove
+sudo rm -rf /var/lib/docker
+sudo rm -rf /etc/docker
+
+# Установка заново
+sudo apt update
+sudo apt install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+sudo systemctl start docker
+sudo systemctl enable docker
+```
+
+### 12.5. Ошибка Docker команд
 
 **Проблема:** `permission denied while trying to connect to the Docker daemon socket`
 
@@ -950,8 +1051,9 @@ docker compose logs --since 1h bot
 2. Выйдите и войдите снова
 3. Проверьте права: `docker ps` (должно работать без sudo)
 4. Если используете root, убедитесь, что Docker запущен: `sudo systemctl start docker`
+5. Проверьте, что сокет существует: `ls -la /var/run/docker.sock`
 
-### 12.5. Ошибка git pull
+### 12.6. Ошибка git pull
 
 **Проблема:** `error: Your local changes to the following files would be overwritten by merge`
 
@@ -960,7 +1062,7 @@ docker compose logs --since 1h bot
 2. Или добавьте `git stash` перед `git pull`
 3. Или используйте `git fetch` и `git reset --hard origin/main`
 
-### 12.6. Контейнер не запускается
+### 12.7. Контейнер не запускается
 
 **Проблема:** Контейнер падает сразу после запуска
 
@@ -970,7 +1072,7 @@ docker compose logs --since 1h bot
 3. Проверьте, что все зависимости установлены
 4. Проверьте, что база данных доступна
 
-### 12.7. Медленный деплой
+### 12.8. Медленный деплой
 
 **Проблема:** Деплой занимает слишком много времени
 
