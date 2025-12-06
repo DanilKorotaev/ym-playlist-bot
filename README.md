@@ -582,17 +582,40 @@ ym-playlist-bot/
   - Автоматическое и ручное развертывание
   - Процедуры отката к предыдущей версии
 
-## Релизы
+## Релизы и процесс разработки
 
-Проект использует семантическое версионирование (SemVer). Для создания релизов:
+Проект использует **Git Flow** для управления разработкой и релизами:
 
-- **Документация по релизам**: [docs/instructions/releases.md](docs/instructions/releases.md) - полное руководство по процессу создания релизов
+- **Git Flow**: [docs/instructions/git_flow.md](docs/instructions/git_flow.md) - полное руководство по процессу разработки с Git Flow
+- **Процесс релизов**: [docs/instructions/releases.md](docs/instructions/releases.md) - детали процесса создания релизов
 - **CHANGELOG**: [CHANGELOG.md](CHANGELOG.md) - история изменений проекта
 
-**Быстрый старт:**
+**Структура веток:**
+- `main` - стабильный код для продакшена
+- `develop` - основная ветка разработки
+- `feature/*` - разработка новых фич
+- `release/*` - подготовка релизов
+- `hotfix/*` - срочные исправления
+
+**Быстрый старт с Git Flow:**
 ```bash
-# Создание релиза (после обновления CHANGELOG.md)
-./scripts/create_release.sh 4.1.0
+# Создание feature-ветки
+./scripts/git_flow_feature.sh start название-фичи
+
+# Завершение feature-ветки
+./scripts/git_flow_feature.sh finish название-фичи
+
+# Создание release-ветки
+./scripts/git_flow_release.sh start 4.1.0
+
+# Завершение release-ветки (создает тег и мержит в main)
+./scripts/git_flow_release.sh finish 4.1.0
+
+# Создание hotfix-ветки
+./scripts/git_flow_hotfix.sh start 4.1.1
+
+# Завершение hotfix-ветки (создает тег и мержит в main и develop)
+./scripts/git_flow_hotfix.sh finish 4.1.1
 ```
 
 ### Быстрый старт
@@ -672,11 +695,29 @@ ym-playlist-bot/
 
 ## Разработка
 
-Для разработки рекомендуется:
+Проект использует **Git Flow** для управления разработкой. Подробнее см. [docs/instructions/git_flow.md](docs/instructions/git_flow.md).
 
-1. Использовать отдельный тестовый бот и тестовый плейлист
-2. Создать отдельную ветку для разработки
-3. Тестировать изменения локально перед деплоем
+### Процесс разработки
+
+1. **Создание feature-ветки**:
+   ```bash
+   ./scripts/git_flow_feature.sh start название-фичи
+   ```
+
+2. **Разработка и тестирование**:
+   - Используйте отдельный тестовый бот и тестовый плейлист
+   - Тестируйте изменения локально перед мержем
+
+3. **Завершение feature**:
+   ```bash
+   ./scripts/git_flow_feature.sh finish название-фичи
+   ```
+
+### Рекомендации
+
+- Использовать отдельный тестовый бот и тестовый плейлист
+- Тестировать изменения локально перед деплоем
+- Следовать [Conventional Commits](https://www.conventionalcommits.org/) для сообщений коммитов
 
 ### Миграция на aiogram 3.x
 
