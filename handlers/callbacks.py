@@ -192,7 +192,7 @@ class CallbackHandlers:
     async def _handle_buy_payment(self, query: CallbackQuery, telegram_id: int, plan_id: str):
         """Обработка покупки подписки."""
         payment_service = PaymentService(self.db)
-        payment_data = payment_service.create_payment(telegram_id, plan_id)
+        payment_data = await payment_service.create_payment(telegram_id, plan_id)
         
         if not payment_data:
             await query.answer("Ошибка при создании платежа", show_alert=True)

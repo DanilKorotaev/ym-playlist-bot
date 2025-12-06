@@ -163,7 +163,7 @@ class MessageHandlers:
                 if ok:
                     track_display = yandex_service.format_track(track_obj)
                     # Получаем информацию о том, куда был добавлен трек
-                    playlist = self.db.get_playlist(playlist_id)
+                    playlist = await self.db.get_playlist(playlist_id)
                     insert_position = playlist.get("insert_position", "end") if playlist else "end"
                     position_text = "в начало" if insert_position == "start" else "в конец"
                     await message.answer(

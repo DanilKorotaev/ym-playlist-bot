@@ -73,10 +73,8 @@ class PlaylistService:
         
         if ok:
             # Логируем действие
-            await asyncio.to_thread(
-                self.db.log_action, telegram_id, "track_added", playlist_id, 
-                f"track_id={track_id}, position={insert_position}"
-            )
+            await self.db.log_action(telegram_id, "track_added", playlist_id, 
+                f"track_id={track_id}, position={insert_position}")
             return True, None
         
         return False, error or "Ошибка вставки трека"
@@ -124,10 +122,8 @@ class PlaylistService:
         
         if ok:
             # Логируем действие
-            await asyncio.to_thread(
-                self.db.log_action, telegram_id, "track_deleted", playlist_id, 
-                f"from={from_idx}, to={to_idx}"
-            )
+            await self.db.log_action(telegram_id, "track_deleted", playlist_id, 
+                f"from={from_idx}, to={to_idx}")
             return True, "Трек успешно удалён."
         
         return False, error or "Ошибка удаления трека"

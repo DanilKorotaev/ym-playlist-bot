@@ -63,7 +63,7 @@ class PaymentService:
         except (ValueError, IndexError):
             return None
     
-    def create_payment(self, telegram_id: int, subscription_type: str) -> Optional[Dict]:
+    async def create_payment(self, telegram_id: int, subscription_type: str) -> Optional[Dict]:
         """Создать платеж и вернуть данные для инвойса."""
         if subscription_type not in SUBSCRIPTION_PLANS:
             return None
@@ -72,7 +72,7 @@ class PaymentService:
         payload = self.generate_invoice_payload(telegram_id, subscription_type)
         
         # Создаем запись о платеже
-        payment_id = self.db.create_payment(
+        payment_id = await self.db.create_payment(
             telegram_id=telegram_id,
             invoice_payload=payload,
             stars_amount=plan['stars'],
@@ -87,11 +87,11 @@ class PaymentService:
             'plan_name': plan['name']
         }
     
-    def process_successful_payment(self, telegram_id: int, invoice_payload: str, 
+    async def process_successful_payment(self, telegram_id: int, invoice_payload: str, 
                                    stars_amount: int) -> bool:
         """Обработать успешный платеж."""
         # Обновляем статус платежа
-        self.db.update_payment_status(invoice_payload, 'completed')
+        await self.db.update_payment_status(invoice_payload, 'completed')
         
         # Парсим payload
         payload_data = self.parse_invoice_payload(invoice_payload)
@@ -113,7 +113,7 @@ class PaymentService:
         if plan.get('duration_days'):
             expires_at = datetime.now() + timedelta(days=plan['duration_days'])
         
-        self.db.create_subscription(
+        await self.db.create_subscription(
             telegram_id=telegram_id,
             subscription_type=subscription_type,
             stars_amount=stars_amount,

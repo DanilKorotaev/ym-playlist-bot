@@ -1081,7 +1081,7 @@ class CommandHandlers:
         telegram_id = message.from_user.id
         
         payment_service = PaymentService(self.db)
-        success = payment_service.process_successful_payment(
+        success = await payment_service.process_successful_payment(
             telegram_id=telegram_id,
             invoice_payload=successful_payment.invoice_payload,
             stars_amount=successful_payment.total_amount

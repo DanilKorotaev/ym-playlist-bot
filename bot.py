@@ -145,6 +145,9 @@ async def main():
         # Инициализируем БД асинхронно
         await db.init_db()
         
+        # Инициализируем дефолтный аккаунт в менеджере клиентов
+        await client_manager.init_default_account()
+        
         # Создаем Bot и Dispatcher
         bot_instance = Bot(token=TELEGRAM_TOKEN)
         storage = MemoryStorage()

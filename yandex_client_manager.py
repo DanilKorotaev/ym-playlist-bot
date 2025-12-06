@@ -28,11 +28,12 @@ class YandexClientManager:
         self._user_clients: Dict[int, Client] = {}
         self._default_client_initialized = False
         
-        # Сохраняем дефолтный токен в БД
-        self.db.set_default_yandex_account(default_token)
-        
         # Дефолтный клиент будет инициализирован лениво при первом использовании
         # (асинхронно, чтобы не блокировать запуск)
+    
+    async def init_default_account(self):
+        """Инициализировать дефолтный аккаунт в БД (вызывается после инициализации БД)."""
+        await self.db.set_default_yandex_account(self.default_token)
     
     def _create_client_with_timeout(self, token: str) -> Client:
         """Создать клиент с настройками таймаута."""
