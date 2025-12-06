@@ -89,7 +89,7 @@ class CommandHandlers:
                     
                     await message.answer(
                         f"✅ Вы получили доступ к плейлисту «{playlist.get('title', 'Без названия')}»!\n\n"
-                        f"Теперь вы можете добавлять треки в этот плейлист, отправляя ссылки на треки, альбомы или плейлисты.",
+                        f"Теперь вы можете добавлять треки в этот плейлист, отправляя ссылки на треки, альбомы или плейлисты из Яндекс.Музыки",
                         reply_markup=get_main_menu_keyboard()
                     )
                     await self.db.log_action(telegram_id, "playlist_shared_access", playlist["id"], f"via_token={share_token}")
