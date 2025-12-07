@@ -22,6 +22,7 @@ from utils.maintenance_middleware import MaintenanceMiddleware
 from handlers.commands import CommandHandlers
 from handlers.callbacks import CallbackHandlers
 from handlers.messages import MessageHandlers
+from handlers.webapp import WebAppHandlers
 from handlers.states import (
     CreatePlaylistStates,
     SetTokenStates,
@@ -74,6 +75,7 @@ context_manager = UserContextManager(db)
 command_handlers = CommandHandlers(db, client_manager, context_manager)
 callback_handlers = CallbackHandlers(db, context_manager, client_manager)
 message_handlers = MessageHandlers(db, client_manager, context_manager)
+webapp_handlers = WebAppHandlers(db, client_manager, context_manager)
 
 # Глобальные переменные для корректного завершения
 bot_instance: Bot = None
@@ -311,6 +313,12 @@ async def main():
         dp_instance.message.register(
             message_handlers.add_command,
             F.text & ~F.text.in_(menu_buttons) & ~F.text.startswith('/')
+        )
+        
+        # === Обработка данных от Web App (Mini App) ===
+        dp_instance.message.register(
+            webapp_handlers.handle_web_app_data,
+            F.web_app_data
         )
         
         logger.info("Начинаю polling...")

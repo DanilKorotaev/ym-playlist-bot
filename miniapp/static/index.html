@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <meta name="theme-color" content="#3390ec">
+    <title>Музыкальный плеер</title>
+    <link rel="stylesheet" href="css/styles.css">
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+</head>
+<body>
+    <div class="container">
+        <header class="header">
+            <h1>🎵 Музыкальный плеер</h1>
+            <p class="subtitle">Воспроизведение плейлистов Яндекс.Музыки</p>
+        </header>
+
+        <main class="main-content">
+            <div id="loading" class="loading">
+                <p>Загрузка...</p>
+            </div>
+
+            <div id="content" class="content hidden">
+                <div id="playlist-selector" class="playlist-selector">
+                    <h2>Выберите плейлист</h2>
+                    <div id="playlists-list" class="playlists-list"></div>
+                </div>
+
+                <div id="player-section" class="player-section hidden">
+                    <div class="current-track">
+                        <h3 id="track-title">-</h3>
+                        <p id="track-artist">-</p>
+                    </div>
+
+                    <div class="player-controls">
+                        <button id="prev-btn" class="control-btn">⏮</button>
+                        <button id="play-pause-btn" class="control-btn play-btn">▶</button>
+                        <button id="next-btn" class="control-btn">⏭</button>
+                    </div>
+
+                    <div class="progress-container">
+                        <div class="progress-bar">
+                            <div id="progress" class="progress"></div>
+                        </div>
+                        <div class="time-info">
+                            <span id="current-time">0:00</span>
+                            <span id="total-time">0:00</span>
+                        </div>
+                    </div>
+
+                    <div id="tracks-list" class="tracks-list"></div>
+                </div>
+            </div>
+
+            <div id="error" class="error hidden">
+                <p id="error-message"></p>
+            </div>
+        </main>
+    </div>
+
+    <script src="js/telegram-api.js"></script>
+    <script src="js/app.js"></script>
+</body>
+</html>
+
