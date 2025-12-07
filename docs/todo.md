@@ -23,6 +23,7 @@
 ### Новые функции
 
 - [ ] [Автоматическое обновление очереди воспроизведения при добавлении новых треков](tasks/pending/task-feature-auto-queue-update.md)
+- [ ] [Реализация музыкального плеера в Telegram Mini App](tasks/pending/task-feature-miniapp-player.md)
 - [ ] [Уведомления о новых треках в общих плейлистах](tasks/pending/task-feature-notifications.md)
 - [ ] [Управление неиспользуемыми плейлистами в аккаунте Яндекс.Музыки](tasks/pending/task-feature-unused-playlists.md)
 - [ ] [Админка для управления лимитами пользователей](tasks/pending/task-feature-admin-panel.md)
