@@ -658,6 +658,19 @@ async def _get_track_streaming_url(self, track_id: int, playlist_id: int):
 
 **Дата завершения:** 2025-12-07
 
+### Этап 2.1: Настройка локального тестирования ✅ ЗАВЕРШЕН
+
+- [x] Добавить nginx в `docker-compose.yml` для раздачи статики Mini App
+- [x] Создать конфигурацию `nginx/nginx.conf` с CORS заголовками
+- [x] Добавить переменную `MINIAPP_URL` в окружение бота
+- [x] Создать инструкцию `docs/instructions/miniapp_local_testing.md` для локального тестирования
+- [x] Добавить поддержку альтернативных туннелей для РФ (xTunnel, localhost.run, bore.pub)
+- [x] Протестировать запуск через Docker Compose
+
+**Результат:** ✅ Настроена инфраструктура для локального тестирования Mini App через Docker. Создана подробная инструкция с поддержкой различных туннелей для доступа из РФ.
+
+**Дата завершения:** 2025-12-07
+
 ### Этап 3: Работа с плейлистами
 
 - [ ] Создать `miniapp/static/js/playlist.js` - работа с плейлистами
@@ -771,11 +784,11 @@ class PlaylistUpdater {
 
 ### Этап 7: Развертывание на прод
 
-- [ ] Настроить nginx для раздачи статики
+- [x] Настроить nginx для раздачи статики (локально)
+- [x] Обновить `docker-compose.yml` с nginx сервисом
 - [ ] Получить SSL сертификат через Let's Encrypt (см. раздел "Получение SSL сертификата")
-- [ ] Обновить `docker-compose.yml` с nginx сервисом
 - [ ] Обновить `Dockerfile` (если нужно)
-- [ ] Настроить переменные окружения для URL Mini App
+- [ ] Настроить переменные окружения для URL Mini App на проде
 - [ ] Протестировать на прод сервере
 - [ ] Обновить URL Web App в BotFather (если используется кнопка "Open")
 
@@ -968,7 +981,11 @@ MINIAPP_PORT=8080
 - `services/yandex_service.py` - получение URL треков
 - `services/playlist_service.py` - работа с плейлистами
 - `handlers/keyboards.py` - добавление кнопки Web App
-- `handlers/webapp.py` - обработка данных от Mini App (новый файл)
+- `handlers/webapp.py` - обработка данных от Mini App
+- `miniapp/static/` - статические файлы Mini App (HTML, CSS, JS)
+- `nginx/nginx.conf` - конфигурация nginx для раздачи статики
+- `docker-compose.yml` - конфигурация Docker Compose (добавлен nginx сервис)
+- `docs/instructions/miniapp_local_testing.md` - инструкция по локальному тестированию
 - `tools/test_download_tracks.py` - пример работы с download_info
 - `docs/tasks/pending/task-feature-auto-queue-update.md` - исходная задача
 - `docs/research/telegram_music_player_research.md` - исследование возможностей

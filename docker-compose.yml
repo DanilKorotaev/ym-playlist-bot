@@ -55,9 +55,24 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       MAINTENANCE_MODE: ${MAINTENANCE_MODE:-false}
       ADMIN_IDS: ${ADMIN_IDS:-}
+      MINIAPP_URL: ${MINIAPP_URL:-}
     depends_on:
       postgres:
         condition: service_healthy
+    networks:
+      - bot_network
+    restart: unless-stopped
+
+  nginx:
+    image: nginx:alpine
+    container_name: ym_bot_nginx
+    ports:
+      - "80:80"
+    volumes:
+      - ./miniapp/static:/usr/share/nginx/html:ro
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - bot
     networks:
       - bot_network
     restart: unless-stopped

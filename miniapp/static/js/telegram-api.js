@@ -149,3 +149,4 @@ class TelegramAPI {
 // Создаем глобальный экземпляр
 window.telegramAPI = new TelegramAPI();
 
+

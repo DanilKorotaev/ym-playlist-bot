@@ -106,3 +106,4 @@ MINIAPP_URL=https://your-domain.com/miniapp/
 - Для разработки используйте ngrok или другой туннель
 - Для продакшена нужен реальный домен с SSL сертификатом (Let's Encrypt)
 
+
