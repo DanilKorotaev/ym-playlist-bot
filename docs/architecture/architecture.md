@@ -59,10 +59,24 @@
   - `user_subscriptions` - подписки пользователей на расширенные лимиты
   - `payments` - история платежей через Telegram Stars
 
+### Mini App API Layer
+- **FastAPI**: REST API для Telegram Mini App (отдельный контейнер)
+- **Модули**:
+  - `miniapp/api/main.py` - точка входа для запуска API в отдельном контейнере
+  - `miniapp/api/server.py` - FastAPI приложение и инициализация
+  - `miniapp/api/routes.py` - REST API эндпоинты для Mini App
+  - `miniapp/api/auth.py` - аутентификация через Telegram Web App initData
+- **Эндпоинты**:
+  - `GET /api/playlists` - получение списка плейлистов пользователя
+  - `GET /api/playlists/{playlist_id}/tracks` - получение треков из плейлиста
+  - `GET /api/playlists/{playlist_id}/updates` - проверка обновлений плейлиста
+  - `GET /api/tracks/{track_id}/stream` - получение URL для стриминга трека
+- **Архитектура**: API работает в отдельном Docker контейнере для независимого масштабирования
+
 ### Config
 - **Переменные окружения**: `.env` файл через `python-dotenv`
 - **Обязательные**: `TELEGRAM_TOKEN`, `YANDEX_TOKEN`
-- **Опциональные**: `DB_TYPE` (sqlite/postgresql)
+- **Опциональные**: `DB_TYPE` (sqlite/postgresql), `MINIAPP_API_PORT`, `MINIAPP_API_HOST`
 
 ### Структура проекта
 ```
@@ -83,9 +97,21 @@ ym-playlist-bot/
 ├── handlers/                    # Обработчики Telegram
 │   ├── __init__.py
 │   ├── commands.py              # Команды бота
-│   ├── callbacks.py             # Callback query
+│   ├── callbacks.py              # Callback query
 │   ├── messages.py              # Текстовые сообщения
 │   └── keyboards.py             # Клавиатуры
+├── miniapp/                     # Mini App (Telegram Web App)
+│   ├── api/                     # REST API для Mini App
+│   │   ├── __init__.py
+│   │   ├── main.py              # Точка входа для API контейнера
+│   │   ├── server.py            # FastAPI приложение
+│   │   ├── routes.py            # REST API эндпоинты
+│   │   └── auth.py              # Аутентификация через Telegram
+│   ├── static/                  # Статические файлы Mini App
+│   │   ├── index.html
+│   │   ├── css/
+│   │   └── js/
+│   └── Dockerfile               # Dockerfile для API контейнера
 ├── utils/                       # Утилиты
 │   ├── __init__.py
 │   └── context.py               # Управление контекстом пользователей
@@ -253,6 +279,10 @@ print(f"Текущий лимит: {user_limit} плейлистов" if user_li
 ### Технические улучшения
 - **Telegram Layer**: ✅ Миграция на `aiogram 3.x` с полноценной FSM-логикой завершена
 - **Storage Layer**: Синхронные вызовы БД обернуты в `asyncio.to_thread()` для неблокирующей работы. В будущем можно мигрировать на `asyncpg`/`aiosqlite` для полной асинхронности
-- **Docker**: docker-compose с сервисами bot + db + pgadmin (уже реализовано)
+- **Docker**: ✅ docker-compose с сервисами bot + api + db + pgadmin + nginx (реализовано)
+  - **Bot контейнер**: Запускает только Telegram бота (aiogram)
+  - **API контейнер**: Запускает FastAPI сервер для Mini App (отдельный контейнер для независимого масштабирования)
+  - **Nginx контейнер**: Раздает статику Mini App и проксирует API запросы к API контейнеру
+- **Mini App API**: ✅ Вынесен в отдельный контейнер для независимого масштабирования и обновления
 - **Config**: pydantic-based settings для валидации конфигурации
 - **Тесты**: Добавление unit-тестов для services и handlers

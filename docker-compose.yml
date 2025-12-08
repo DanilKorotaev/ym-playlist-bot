@@ -56,13 +56,42 @@ services:
       MAINTENANCE_MODE: ${MAINTENANCE_MODE:-false}
       ADMIN_IDS: ${ADMIN_IDS:-}
       MINIAPP_URL: ${MINIAPP_URL:-}
-      MINIAPP_API_PORT: ${MINIAPP_API_PORT:-8000}
     depends_on:
       postgres:
         condition: service_healthy
     networks:
       - bot_network
     restart: unless-stopped
+
+  api:
+    build:
+      context: .
+      dockerfile: miniapp/Dockerfile
+    container_name: ym_bot_api
+    environment:
+      YANDEX_TOKEN: ${YANDEX_TOKEN}
+      DB_TYPE: ${DB_TYPE:-postgresql}
+      DB_HOST: ${DB_HOST:-postgres}
+      DB_PORT: ${DB_PORT:-5432}
+      DB_NAME: ${POSTGRES_DB:-yandex_music_bot}
+      DB_USER: ${POSTGRES_USER:-postgres}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      MINIAPP_API_PORT: ${MINIAPP_API_PORT:-8000}
+      MINIAPP_API_HOST: ${MINIAPP_API_HOST:-0.0.0.0}
+      TELEGRAM_TOKEN: ${TELEGRAM_TOKEN}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - bot_network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/docs').read()"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
 
   nginx:
     image: nginx:alpine
@@ -74,6 +103,7 @@ services:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
     depends_on:
       - bot
+      - api
     networks:
       - bot_network
     restart: unless-stopped

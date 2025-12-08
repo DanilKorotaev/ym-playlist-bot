@@ -105,6 +105,8 @@ docker compose ps
 - `ym_bot_postgres` (PostgreSQL)
 - `ym_bot_pgadmin` (pgAdmin, опционально)
 - `ym_bot` (бот)
+- `ym_bot_api` (FastAPI сервер для Mini App)
+- `ym_bot_nginx` (nginx для раздачи статики и проксирования API)
 
 ## Шаг 3: Запуск nginx для раздачи статики Mini App
 
@@ -342,6 +344,11 @@ docker compose logs -f bot
 **Логи бота:**
 ```bash
 docker compose logs -f bot
+```
+
+**Логи API:**
+```bash
+docker compose logs -f api
 ```
 
 **Логи nginx:**

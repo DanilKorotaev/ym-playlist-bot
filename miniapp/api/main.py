@@ -1,0 +1,121 @@
+"""
+Точка входа для запуска Mini App API в отдельном контейнере.
+"""
+import os
+import logging
+import asyncio
+import signal
+import sys
+from dotenv import load_dotenv
+import uvicorn
+
+from database import create_database
+from yandex_client_manager import YandexClientManager
+from miniapp.api.server import app, init_app
+from miniapp.api.routes import init_fastapi_db
+
+load_dotenv()
+
+# Логирование
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
+log_level = getattr(logging, LOG_LEVEL, logging.INFO)
+
+logging.basicConfig(
+    level=log_level,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+# Глобальные переменные
+db = None
+client_manager = None
+
+
+async def init():
+    """Инициализация БД и зависимостей."""
+    global db, client_manager
+    
+    logger.info("Инициализация Mini App API...")
+    
+    # Создаем БД
+    db = create_database()
+    await db.init_db()
+    logger.info("База данных инициализирована")
+    
+    # Создаем client_manager
+    yandex_token = os.getenv("YANDEX_TOKEN")
+    if not yandex_token:
+        raise ValueError("YANDEX_TOKEN не установлен")
+    
+    client_manager = YandexClientManager(yandex_token, db)
+    await client_manager.init_default_account()
+    logger.info("YandexClientManager инициализирован")
+    
+    # Инициализируем FastAPI приложение с зависимостями
+    init_app(db, client_manager)
+    logger.info("FastAPI зависимости установлены")
+    
+    # Инициализируем БД для FastAPI event loop (важно для PostgreSQL)
+    await init_fastapi_db()
+    logger.info("FastAPI event loop инициализирован")
+    
+    logger.info("Mini App API полностью инициализирован")
+
+
+def signal_handler(signum, frame):
+    """Обработчик сигналов для корректного завершения."""
+    logger.info(f"Получен сигнал {signum}, завершаю работу API...")
+    sys.exit(0)
+
+
+async def main():
+    """Главная функция."""
+    try:
+        # Регистрируем обработчики сигналов
+        signal.signal(signal.SIGTERM, signal_handler)
+        signal.signal(signal.SIGINT, signal_handler)
+        
+        logger.info("Запуск Mini App API...")
+        
+        # Инициализируем зависимости
+        await init()
+        
+        # Получаем порт из переменных окружения
+        api_port = int(os.getenv("MINIAPP_API_PORT", "8000"))
+        api_host = os.getenv("MINIAPP_API_HOST", "0.0.0.0")
+        
+        logger.info(f"Запуск FastAPI сервера на {api_host}:{api_port}...")
+        
+        # Запускаем uvicorn
+        config = uvicorn.Config(
+            app,
+            host=api_host,
+            port=api_port,
+            log_level="info" if log_level <= logging.INFO else "warning",
+            loop="asyncio"
+        )
+        server = uvicorn.Server(config)
+        await server.serve()
+        
+    except KeyboardInterrupt:
+        logger.info("Получен сигнал прерывания, завершаю работу...")
+    except Exception as e:
+        logger.exception(f"Критическая ошибка при запуске API: {e}")
+        raise
+    finally:
+        if db:
+            # Закрываем соединения с БД
+            if hasattr(db, 'close'):
+                await db.close()
+            logger.info("Соединения с БД закрыты")
+
+
+if __name__ == "__main__":
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        logger.info("API остановлен пользователем")
+    except Exception as e:
+        logger.exception(f"Критическая ошибка: {e}")
+        sys.exit(1)
+

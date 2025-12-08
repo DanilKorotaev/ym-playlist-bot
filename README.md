@@ -542,7 +542,7 @@ ym-playlist-bot/
 │   ├── __init__.py
 │   └── context.py              # Управление контекстом пользователей
 ├── bot.db                       # База данных SQLite (создается автоматически)
-├── docker-compose.yml           # Docker Compose конфигурация (PostgreSQL + pgAdmin + Bot)
+├── docker-compose.yml           # Docker Compose конфигурация (PostgreSQL + pgAdmin + Bot + API + Nginx)
 ├── Dockerfile                   # Docker образ для бота
 ├── requirements.txt            # Зависимости Python
 ├── .env                         # Переменные окружения (не коммитится)
