@@ -15,8 +15,6 @@
 - [ ] [Добавить предпросмотр трека перед добавлением](tasks/pending/task-ux-track-preview.md)
 
 ### Технические улучшения
-
-- [ ] [Вынос Mini App API в отдельный контейнер](tasks/pending/task-tech-separate-api-container.md)
 - [ ] [Добавить pydantic-based settings для валидации конфигурации](tasks/pending/task-tech-pydantic-settings.md)
 - [ ] [Улучшить логирование (структурированные логи)](tasks/pending/task-tech-structured-logging.md)
 - [ ] [Внедрение процессов тестирования](tasks/pending/task-testing-implementation.md)

@@ -73,7 +73,8 @@
 - [x] [Полная асинхронность БД (asyncpg/aiosqlite)](tasks/task-tech-async-db.md) 
 - [x] [Анализ требований к серверному железу и масштабируемости](research/server_requirements.md) 
 - [x] [Настройка CI/CD для автоматического развертывания](instructions/cicd_setup.md) 
-- [x] [Реализация режима технических работ (Maintenance Mode)](tasks/completed/task-tech-maintenance-mode.md) 
+- [x] [Реализация режима технических работ (Maintenance Mode)](tasks/completed/task-tech-maintenance-mode.md)
+- [x] [Вынос Mini App API в отдельный контейнер](tasks/completed/task-tech-separate-api-container.md) 
 
 ## Новые функции
 
@@ -109,8 +110,8 @@
 
 ## Статистика
 
-**Всего выполнено задач**: 51  
-**Последнее обновление**: 2025
+**Всего выполнено задач**: 52  
+**Последнее обновление**: 2025-01-XX
 
 ---
 
