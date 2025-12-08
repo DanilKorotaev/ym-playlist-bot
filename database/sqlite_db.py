@@ -2,8 +2,10 @@
 Реализация базы данных для SQLite с использованием aiosqlite.
 """
 import aiosqlite
+import asyncio
 import logging
 import os
+import threading
 from typing import Optional, List, Dict
 from datetime import datetime
 
@@ -12,6 +14,9 @@ from .base import DatabaseInterface
 logger = logging.getLogger(__name__)
 
 DB_FILE_DEFAULT = "bot.db"
+
+# Глобальная блокировка для синхронизации доступа к SQLite из разных потоков
+_sqlite_lock = threading.Lock()
 
 
 class SQLiteDatabase(DatabaseInterface):
@@ -25,28 +30,65 @@ class SQLiteDatabase(DatabaseInterface):
             db_file: Путь к файлу БД. Если не указан, берется из DB_FILE или используется bot.db
         """
         self.db_file = db_file or os.getenv("DB_FILE", DB_FILE_DEFAULT)
+        self._lock = _sqlite_lock  # Используем глобальную блокировку
     
     async def _execute(self, query: str, *args):
         """Выполнить запрос без возврата результата."""
-        async with aiosqlite.connect(self.db_file) as conn:
-            await conn.execute(query, args)
-            await conn.commit()
+        # Выполняем всю операцию БД в отдельном потоке с блокировкой
+        def _execute_sync():
+            with self._lock:
+                # Создаем новый event loop для этого потока
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                try:
+                    async def _do_execute():
+                        async with aiosqlite.connect(self.db_file) as conn:
+                            await conn.execute(query, args)
+                            await conn.commit()
+                    loop.run_until_complete(_do_execute())
+                finally:
+                    loop.close()
+        
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, _execute_sync)
     
     async def _fetchrow(self, query: str, *args) -> Optional[aiosqlite.Row]:
         """Выполнить запрос и вернуть одну строку."""
-        async with aiosqlite.connect(self.db_file) as conn:
-            conn.row_factory = aiosqlite.Row
-            async with conn.execute(query, args) as cursor:
-                row = await cursor.fetchone()
-                return row
+        def _fetchrow_sync():
+            with self._lock:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                try:
+                    async def _do_fetchrow():
+                        async with aiosqlite.connect(self.db_file) as conn:
+                            conn.row_factory = aiosqlite.Row
+                            async with conn.execute(query, args) as cursor:
+                                return await cursor.fetchone()
+                    return loop.run_until_complete(_do_fetchrow())
+                finally:
+                    loop.close()
+        
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, _fetchrow_sync)
     
     async def _fetch(self, query: str, *args) -> List[aiosqlite.Row]:
         """Выполнить запрос и вернуть все строки."""
-        async with aiosqlite.connect(self.db_file) as conn:
-            conn.row_factory = aiosqlite.Row
-            async with conn.execute(query, args) as cursor:
-                rows = await cursor.fetchall()
-                return rows
+        def _fetch_sync():
+            with self._lock:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                try:
+                    async def _do_fetch():
+                        async with aiosqlite.connect(self.db_file) as conn:
+                            conn.row_factory = aiosqlite.Row
+                            async with conn.execute(query, args) as cursor:
+                                return await cursor.fetchall()
+                    return loop.run_until_complete(_do_fetch())
+                finally:
+                    loop.close()
+        
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, _fetch_sync)
     
     async def init_db(self):
         """Инициализировать структуру БД."""

@@ -188,7 +188,6 @@ class Player {
             
             // Fallback: пробуем использовать URL напрямую
             // (некоторые браузеры могут воспроизводить напрямую)
-            console.warn('Пробую использовать URL напрямую...');
             return url;
         }
     }
@@ -198,7 +197,6 @@ class Player {
      */
     async play() {
         if (!this.audio || !this.audio.src) {
-            console.warn('Нет трека для воспроизведения');
             return;
         }
         
@@ -314,7 +312,7 @@ class Player {
             try {
                 URL.revokeObjectURL(this.blobUrl);
             } catch (e) {
-                console.warn('Ошибка при очистке Blob URL:', e);
+                // Игнорируем ошибки при очистке Blob URL
             }
             this.blobUrl = null;
         }

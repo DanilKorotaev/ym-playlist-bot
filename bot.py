@@ -14,6 +14,8 @@ from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import Message, CallbackQuery, PreCheckoutQuery, SuccessfulPayment
+import uvicorn
+from threading import Thread
 
 from database import create_database
 from yandex_client_manager import YandexClientManager
@@ -149,6 +151,50 @@ async def main():
         
         # Инициализируем дефолтный аккаунт в менеджере клиентов
         await client_manager.init_default_account()
+        
+        # Инициализируем и запускаем FastAPI сервер для Mini App
+        from miniapp.api.server import app, init_app
+        init_app(db, client_manager)
+        logger.info("Mini App API зависимости установлены")
+        
+        # Получаем порт для API из переменных окружения (по умолчанию 8000)
+        api_port = int(os.getenv("MINIAPP_API_PORT", "8000"))
+        
+        # Запускаем FastAPI сервер в отдельном потоке с отдельным event loop
+        def run_api_server():
+            """Запустить FastAPI сервер в отдельном потоке с отдельным event loop."""
+            import time
+            # Создаем новый event loop для этого потока
+            new_loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(new_loop)
+            
+            # Небольшая задержка, чтобы убедиться, что все инициализировано
+            time.sleep(1)
+            logger.info(f"Запуск FastAPI сервера на порту {api_port}...")
+            
+            try:
+                # Для PostgreSQL инициализируем pool в новом event loop
+                from miniapp.api.routes import init_fastapi_db
+                new_loop.run_until_complete(init_fastapi_db())
+                
+                # Запускаем uvicorn с новым event loop
+                config = uvicorn.Config(
+                    app,
+                    host="0.0.0.0",
+                    port=api_port,
+                    log_level="info" if log_level <= logging.INFO else "warning",
+                    loop="asyncio"  # Явно указываем asyncio loop
+                )
+                server = uvicorn.Server(config)
+                new_loop.run_until_complete(server.serve())
+            except Exception as e:
+                logger.exception(f"Ошибка при запуске FastAPI сервера: {e}")
+            finally:
+                new_loop.close()
+        
+        api_thread = Thread(target=run_api_server, daemon=True)
+        api_thread.start()
+        logger.info(f"FastAPI сервер запускается на порту {api_port}...")
         
         # Создаем Bot и Dispatcher
         bot_instance = Bot(token=TELEGRAM_TOKEN)

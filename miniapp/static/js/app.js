@@ -8,12 +8,19 @@ class MiniApp {
         this.currentPlaylistId = null;
         this.currentTracks = [];
         this.currentTrackIndex = 0;
-        this.pendingTrackUrl = null; // Для хранения URL, ожидающего загрузки
+        this.currentRevision = null; // Для проверки обновлений плейлиста
         
         this.init();
     }
 
-    init() {
+    async init() {
+        // Ждем инициализации Telegram API
+        let attempts = 0;
+        while (!this.telegramAPI.isAvailable() && attempts < 50) {
+            await new Promise(resolve => setTimeout(resolve, 100));
+            attempts++;
+        }
+        
         // Проверяем доступность Telegram API
         if (!this.telegramAPI.isAvailable()) {
             this.showError('Telegram Web App API не доступен. Откройте приложение через Telegram.');
@@ -29,12 +36,12 @@ class MiniApp {
         // Показываем загрузку
         this.showLoading();
         
-        // Имитируем загрузку (пока нет API)
-        setTimeout(() => {
-            this.hideLoading();
-            this.showContent();
-            this.showPlaylistSelector();
-        }, 1000);
+        // Небольшая задержка для завершения инициализации
+        await new Promise(resolve => setTimeout(resolve, 500));
+        
+        this.hideLoading();
+        this.showContent();
+        this.showPlaylistSelector();
     }
     
     initPlayer() {
@@ -143,7 +150,16 @@ class MiniApp {
         const content = document.getElementById('content');
         const loading = document.getElementById('loading');
         
-        if (errorMessage) errorMessage.textContent = message;
+        // Форматируем сообщение (заменяем \n на <br>)
+        const formattedMessage = message.replace(/\n/g, '<br>');
+        
+        if (errorMessage) {
+            errorMessage.innerHTML = formattedMessage;
+            errorMessage.style.textAlign = 'left';
+            errorMessage.style.padding = '20px';
+            errorMessage.style.lineHeight = '1.6';
+        }
+        
         if (error) error.classList.remove('hidden');
         if (content) content.classList.add('hidden');
         if (loading) loading.classList.add('hidden');
@@ -169,24 +185,33 @@ class MiniApp {
     }
 
     async loadPlaylists() {
-        // Отправляем запрос на получение плейлистов через sendData()
+        // Загружаем плейлисты через REST API
         const playlistsList = document.getElementById('playlists-list');
         if (playlistsList) {
             playlistsList.innerHTML = '<p style="text-align: center; color: #999;">Загрузка плейлистов...</p>';
         }
         
-        // Отправляем запрос боту через Telegram Web App API
-        if (this.telegramAPI.isAvailable()) {
-            this.telegramAPI.sendData({
-                action: 'get_playlists'
-            });
+        try {
+            // Выполняем запрос к REST API
+            const data = await this.telegramAPI.apiGet('/playlists');
             
-            // Показываем уведомление пользователю
-            this.telegramAPI.showAlert('Запрос на получение плейлистов отправлен. Ответ придет в виде сообщения в боте.');
-        } else {
-            if (playlistsList) {
-                playlistsList.innerHTML = '<p style="text-align: center; color: #ff4444;">Ошибка: Telegram Web App API не доступен</p>';
+            // Отображаем плейлисты
+            if (data.playlists && data.playlists.length > 0) {
+                this.displayPlaylists(data.playlists);
+            } else {
+                if (playlistsList) {
+                    playlistsList.innerHTML = '<p style="text-align: center; color: #999;">Нет доступных плейлистов</p>';
+                }
             }
+        } catch (error) {
+            console.error('Ошибка при загрузке плейлистов:', error);
+            
+            if (playlistsList) {
+                playlistsList.innerHTML = `<p style="text-align: center; color: #ff4444;">Ошибка: ${error.message}</p>`;
+            }
+            
+            this.showError(`Ошибка при загрузке плейлистов: ${error.message}`);
+            this.telegramAPI.showAlert(`Ошибка при загрузке плейлистов: ${error.message}`);
         }
     }
     
@@ -228,14 +253,36 @@ class MiniApp {
     async selectPlaylist(playlist) {
         this.currentPlaylistId = playlist.id;
         
-        // Запрашиваем треки из плейлиста
-        if (this.telegramAPI.isAvailable()) {
-            this.telegramAPI.sendData({
-                action: 'get_tracks',
-                playlist_id: playlist.id
-            });
+        // Показываем загрузку
+        const tracksList = document.getElementById('tracks-list');
+        if (tracksList) {
+            tracksList.innerHTML = '<p style="text-align: center; color: #999;">Загрузка треков...</p>';
+        }
+        
+        try {
+            // Запрашиваем треки через REST API
+            const data = await this.telegramAPI.apiGet(`/playlists/${playlist.id}/tracks`);
             
-            this.telegramAPI.showAlert('Запрос треков отправлен. Ответ придет в виде сообщения в боте.');
+            // Сохраняем revision для будущих проверок обновлений
+            this.currentRevision = data.revision;
+            
+            // Отображаем треки
+            if (data.tracks && data.tracks.length > 0) {
+                this.displayTracks(data.tracks);
+            } else {
+                if (tracksList) {
+                    tracksList.innerHTML = '<p style="text-align: center; color: #999;">Плейлист пуст</p>';
+                }
+            }
+        } catch (error) {
+            console.error('Ошибка при загрузке треков:', error);
+            
+            if (tracksList) {
+                tracksList.innerHTML = `<p style="text-align: center; color: #ff4444;">Ошибка: ${error.message}</p>`;
+            }
+            
+            this.showError(`Ошибка при загрузке треков: ${error.message}`);
+            this.telegramAPI.showAlert(`Ошибка при загрузке треков: ${error.message}`);
         }
     }
     
@@ -245,7 +292,6 @@ class MiniApp {
      */
     displayTracks(tracks) {
         if (!tracks || tracks.length === 0) {
-            console.warn('Нет треков для отображения');
             return;
         }
         
@@ -265,9 +311,13 @@ class MiniApp {
             }
             
             const duration = this.formatTime(track.duration || 0);
+            // Безопасная обработка артистов (может быть массивом или строкой)
+            const artistsText = Array.isArray(track.artists) 
+                ? track.artists.join(', ') 
+                : (track.artists || 'Неизвестный артист');
             trackItem.innerHTML = `
                 <h4>${this.escapeHtml(track.title || 'Без названия')}</h4>
-                <p>${this.escapeHtml(track.artists?.join(', ') || 'Неизвестный артист')} • ${duration}</p>
+                <p>${this.escapeHtml(artistsText)} • ${duration}</p>
             `;
             
             trackItem.addEventListener('click', () => {
@@ -341,7 +391,6 @@ class MiniApp {
 
     async loadTrack(track) {
         if (!track) {
-            console.warn('Нет трека для загрузки');
             return;
         }
         
@@ -350,7 +399,11 @@ class MiniApp {
         const trackArtist = document.getElementById('track-artist');
         
         if (trackTitle) trackTitle.textContent = track.title || '-';
-        if (trackArtist) trackArtist.textContent = track.artists?.join(', ') || '-';
+        // Безопасная обработка артистов (может быть массивом или строкой)
+        const artistsText = Array.isArray(track.artists) 
+            ? track.artists.join(', ') 
+            : (track.artists || '-');
+        if (trackArtist) trackArtist.textContent = artistsText;
         
         // Обновляем активный трек в списке
         this.updateActiveTrack();
@@ -361,25 +414,27 @@ class MiniApp {
             return;
         }
         
-        // Иначе запрашиваем URL у бота
+        // Иначе запрашиваем URL у бота через REST API
         if (!this.currentPlaylistId) {
             this.showError('Не выбран плейлист');
             return;
         }
         
-        // Отправляем запрос на получение URL трека
-        if (this.telegramAPI.isAvailable()) {
-            this.pendingTrackUrl = track; // Сохраняем трек для загрузки после получения URL
-            this.telegramAPI.sendData({
-                action: 'get_track_url',
-                track_id: track.id,
-                playlist_id: this.currentPlaylistId
-            });
+        try {
+            // Запрашиваем URL трека через REST API
+            const data = await this.telegramAPI.apiGet(
+                `/tracks/${track.id}/stream?playlist_id=${this.currentPlaylistId}`
+            );
             
-            // Показываем уведомление
-            this.telegramAPI.showAlert('Запрос URL трека отправлен. Ответ придет в виде сообщения в боте.');
-        } else {
-            this.showError('Telegram Web App API не доступен');
+            // Воспроизводим трек по полученному URL
+            if (data.url) {
+                await this.playTrackUrl(data.url, track);
+            } else {
+                this.showError('Не удалось получить URL трека');
+            }
+        } catch (error) {
+            console.error('Ошибка при получении URL трека:', error);
+            this.showError(`Ошибка: ${error.message}`);
         }
     }
     
@@ -403,25 +458,6 @@ class MiniApp {
         } catch (error) {
             console.error('Ошибка при загрузке трека:', error);
             this.showError('Не удалось загрузить трек');
-        }
-    }
-    
-    /**
-     * Обработать URL трека, полученный от бота
-     * @param {string} url - URL трека
-     * @param {Object} trackInfo - Информация о треке
-     */
-    handleTrackUrl(url, trackInfo) {
-        // Сохраняем URL в объекте трека
-        if (trackInfo) {
-            trackInfo.url = url;
-        }
-        
-        // Если это ожидаемый трек, загружаем его
-        if (this.pendingTrackUrl && 
-            this.pendingTrackUrl.id === trackInfo?.id) {
-            this.playTrackUrl(url, trackInfo || this.pendingTrackUrl);
-            this.pendingTrackUrl = null;
         }
     }
     

@@ -102,6 +102,10 @@ class CommandHandlers:
             "Привет! Я бот для управления плейлистами Яндекс.Музыки 🎵\n\n"
         )
         
+        # Добавляем inline-кнопку с Web App (более надежно работает в Telegram Desktop)
+        from .keyboards import get_miniapp_inline_keyboard
+        inline_keyboard = get_miniapp_inline_keyboard()
+        
         if active_info:
             help_text += f"{active_info}\n\n"
         
@@ -116,6 +120,16 @@ class CommandHandlers:
             help_text,
             reply_markup=get_main_menu_keyboard()
         )
+        
+        # Добавляем inline-кнопку с Web App отдельным сообщением
+        # Inline-кнопки более надежно передают initData в Telegram Desktop
+        if inline_keyboard:
+            await message.answer(
+                "💡 <b>Альтернативный способ открыть плеер:</b>\n\n"
+                "Используйте кнопку ниже, если кнопка в меню не работает в Telegram Desktop.",
+                reply_markup=inline_keyboard
+            )
+        
         await self.db.log_action(telegram_id, "command_start", None, None)
     
     async def main_menu(self, message: Message):
@@ -133,11 +147,22 @@ class CommandHandlers:
             text += "Создайте новый или получите доступ к существующему.\n\n"
         
         text += "Выберите действие из меню ниже:"
-        
+
         await message.answer(
             text,
             reply_markup=get_main_menu_keyboard()
         )
+        
+        # Добавляем inline-кнопку с Web App отдельным сообщением
+        # Inline-кнопки более надежно передают initData в Telegram Desktop
+        from .keyboards import get_miniapp_inline_keyboard
+        inline_keyboard = get_miniapp_inline_keyboard()
+        if inline_keyboard:
+            await message.answer(
+                "💡 <b>Альтернативный способ открыть плеер:</b>\n\n"
+                "Используйте кнопку ниже, если кнопка в меню не работает в Telegram Desktop.",
+                reply_markup=inline_keyboard
+            )
     
     async def create_playlist_start(self, message: Message, state: FSMContext):
         """Начало создания плейлиста (FSM)."""

@@ -6,4 +6,6 @@ psycopg2-binary==2.9.9
 asyncpg==0.29.0
 setuptools<81
 aiosqlite==0.20.0
+fastapi==0.115.0
+uvicorn[standard]==0.32.0
 

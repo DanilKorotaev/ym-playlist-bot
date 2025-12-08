@@ -56,6 +56,7 @@ services:
       MAINTENANCE_MODE: ${MAINTENANCE_MODE:-false}
       ADMIN_IDS: ${ADMIN_IDS:-}
       MINIAPP_URL: ${MINIAPP_URL:-}
+      MINIAPP_API_PORT: ${MINIAPP_API_PORT:-8000}
     depends_on:
       postgres:
         condition: service_healthy
