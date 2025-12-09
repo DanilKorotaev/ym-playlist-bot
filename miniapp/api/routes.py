@@ -6,7 +6,7 @@ import logging
 import asyncio
 import xml.etree.ElementTree as ET
 from typing import Optional, List, Dict, Any
-from fastapi import APIRouter, Header, HTTPException, Depends
+from fastapi import APIRouter, Header, HTTPException, Depends, Request
 from fastapi.responses import JSONResponse
 
 from miniapp.api.auth import validate_telegram_init_data, extract_user_id
@@ -27,56 +27,10 @@ if log_level <= logging.DEBUG:
 
 router = APIRouter()
 
-# Глобальные зависимости (будут установлены при запуске)
-_db: Optional[DatabaseInterface] = None
-_client_manager: Optional[YandexClientManager] = None
-_db_factory: Optional[callable] = None  # Функция для создания нового экземпляра БД
-_client_manager_factory: Optional[callable] = None  # Функция для создания нового client_manager
 
-
-def set_dependencies(db: DatabaseInterface, client_manager: YandexClientManager):
-    """Установить зависимости для роутов."""
-    global _db, _client_manager, _db_factory, _client_manager_factory
-    
-    # Сохраняем оригинальные зависимости
-    _db = db
-    _client_manager = client_manager
-    
-    # Сохраняем фабрику для создания нового экземпляра БД в текущем event loop
-    import os
-    db_type = os.getenv("DB_TYPE", "sqlite").lower()
-    
-    if db_type == "postgresql":
-        # Для PostgreSQL создаем фабрику, которая создаст новый экземпляр с новым pool
-        if hasattr(db, 'host'):
-            def create_db():
-                from database.postgresql_db import PostgreSQLDatabase
-                return PostgreSQLDatabase(
-                    host=db.host,
-                    port=db.port,
-                    database=db.database,
-                    user=db.user,
-                    password=db.password
-                )
-        else:
-            def create_db():
-                from database.postgresql_db import PostgreSQLDatabase
-                return PostgreSQLDatabase()
-        _db_factory = create_db
-    else:
-        # Для SQLite используем тот же экземпляр (с блокировкой)
-        _db_factory = None
-    
-    # Сохраняем фабрику для создания нового client_manager с правильной БД
-    default_token = client_manager.default_token
-    timeout = client_manager.timeout
-    
-    def create_client_manager(fastapi_db: DatabaseInterface):
-        from yandex_client_manager import YandexClientManager
-        return YandexClientManager(default_token, fastapi_db, timeout)
-    
-    _client_manager_factory = create_client_manager
-
+# ============================================================================
+# Dependency Injection для FastAPI
+# ============================================================================
 
 async def get_user_id(x_telegram_init_data: str = Header(..., alias="X-Telegram-Init-Data")) -> int:
     """
@@ -108,73 +62,71 @@ async def get_user_id(x_telegram_init_data: str = Header(..., alias="X-Telegram-
         raise HTTPException(status_code=401, detail="Invalid initData")
 
 
-# Глобальные экземпляры для текущего event loop (FastAPI)
-_fastapi_db: Optional[DatabaseInterface] = None
-_fastapi_client_manager: Optional[YandexClientManager] = None
-
-
-async def init_fastapi_db():
-    """Инициализировать БД и client_manager для FastAPI event loop (для PostgreSQL создает новый pool)."""
-    global _fastapi_db, _fastapi_client_manager
+def get_db(request: Request) -> DatabaseInterface:
+    """
+    Получить экземпляр БД для текущего запроса.
     
-    # Для PostgreSQL создаем новый экземпляр БД с новым pool
-    if _db_factory is not None and _fastapi_db is None:
-        _fastapi_db = _db_factory()
-        # Инициализируем pool
-        await _fastapi_db._get_pool()
+    Использует app.state для хранения зависимостей, что позволяет
+    правильно управлять жизненным циклом для разных типов БД:
+    - PostgreSQL: отдельный connection pool для FastAPI event loop
+    - SQLite: общий экземпляр с блокировкой
+    
+    Args:
+        request: FastAPI Request объект для доступа к app.state
         
-        # Создаем отдельный client_manager для FastAPI с правильной БД
-        if _client_manager_factory is not None:
-            _fastapi_client_manager = _client_manager_factory(_fastapi_db)
-            # Инициализируем дефолтный аккаунт
-            await _fastapi_client_manager.init_default_account()
-
-
-def get_db() -> DatabaseInterface:
-    """Получить экземпляр БД для текущего event loop."""
-    global _fastapi_db
-    
-    if _db is None:
-        logger.error("Database not initialized! Call set_dependencies() first.")
+    Returns:
+        Экземпляр DatabaseInterface
+        
+    Raises:
+        HTTPException: Если БД не инициализирована
+    """
+    if not hasattr(request.app.state, 'db'):
+        logger.error("Database not initialized! Check lifespan events.")
         raise HTTPException(
             status_code=500,
             detail="Database not initialized. Server may not be fully started."
         )
     
-    # Для PostgreSQL создаем отдельный экземпляр с новым pool в текущем event loop
-    if _db_factory is not None:
-        # Создаем новый экземпляр БД для текущего event loop (если еще не создан)
-        if _fastapi_db is None:
-            _fastapi_db = _db_factory()
-        return _fastapi_db
-    
-    # Для SQLite используем тот же экземпляр (с блокировкой)
-    return _db
+    return request.app.state.db
 
 
-def get_client_manager() -> YandexClientManager:
-    """Получить менеджер клиентов для текущего event loop."""
-    global _fastapi_client_manager
+def get_client_manager(request: Request) -> YandexClientManager:
+    """
+    Получить менеджер клиентов для текущего запроса.
     
-    if _client_manager is None:
-        logger.error("Client manager not initialized! Call set_dependencies() first.")
+    Args:
+        request: FastAPI Request объект для доступа к app.state
+        
+    Returns:
+        Экземпляр YandexClientManager
+        
+    Raises:
+        HTTPException: Если client_manager не инициализирован
+    """
+    if not hasattr(request.app.state, 'client_manager'):
+        logger.error("Client manager not initialized! Check lifespan events.")
         raise HTTPException(
             status_code=500,
             detail="Client manager not initialized. Server may not be fully started."
         )
     
-    # Для PostgreSQL используем отдельный client_manager с правильной БД
-    if _fastapi_client_manager is not None:
-        return _fastapi_client_manager
+    return request.app.state.client_manager
+
+
+def get_playlist_service(
+    db: DatabaseInterface = Depends(get_db),
+    client_manager: YandexClientManager = Depends(get_client_manager)
+) -> PlaylistService:
+    """
+    Получить сервис плейлистов.
     
-    # Для SQLite используем общий client_manager
-    return _client_manager
-
-
-def get_playlist_service() -> PlaylistService:
-    """Получить сервис плейлистов."""
-    db = get_db()
-    client_manager = get_client_manager()
+    Args:
+        db: Экземпляр БД (внедряется через Depends)
+        client_manager: Менеджер клиентов (внедряется через Depends)
+        
+    Returns:
+        Экземпляр PlaylistService
+    """
     return PlaylistService(db, client_manager)
 
 
@@ -253,7 +205,8 @@ async def get_playlist_tracks(
     playlist_id: int,
     revision: Optional[int] = None,
     user_id: int = Depends(get_user_id),
-    playlist_service: PlaylistService = Depends(get_playlist_service)
+    playlist_service: PlaylistService = Depends(get_playlist_service),
+    client_manager: YandexClientManager = Depends(get_client_manager)
 ):
     """
     Получить список треков из плейлиста.
@@ -273,7 +226,7 @@ async def get_playlist_tracks(
             raise HTTPException(status_code=404, detail="Playlist not found or access denied")
         
         # Получаем клиент для форматирования треков
-        client = await get_client_manager().get_client_for_playlist(playlist_id)
+        client = await client_manager.get_client_for_playlist(playlist_id)
         yandex_service = YandexService(client)
         
         # Форматируем треки
@@ -319,7 +272,8 @@ async def check_playlist_updates(
     playlist_id: int,
     revision: int,
     user_id: int = Depends(get_user_id),
-    playlist_service: PlaylistService = Depends(get_playlist_service)
+    playlist_service: PlaylistService = Depends(get_playlist_service),
+    client_manager: YandexClientManager = Depends(get_client_manager)
 ):
     """
     Проверить обновления плейлиста (для polling).
@@ -354,7 +308,7 @@ async def check_playlist_updates(
             raise HTTPException(status_code=404, detail="Playlist not found or access denied")
         
         # Получаем клиент для форматирования
-        client = await get_client_manager().get_client_for_playlist(playlist_id)
+        client = await client_manager.get_client_for_playlist(playlist_id)
         yandex_service = YandexService(client)
         
         # Форматируем новые треки (все треки, так как мы не знаем, какие именно новые)

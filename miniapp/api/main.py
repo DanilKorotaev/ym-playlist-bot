@@ -12,7 +12,6 @@ import uvicorn
 from database import create_database
 from yandex_client_manager import YandexClientManager
 from miniapp.api.server import app, init_app
-from miniapp.api.routes import init_fastapi_db
 
 load_dotenv()
 
@@ -56,14 +55,11 @@ async def init():
     logger.info("YandexClientManager инициализирован")
     
     # Инициализируем FastAPI приложение с зависимостями
+    # Зависимости будут инициализированы в lifespan event при запуске сервера
     init_app(db, client_manager)
-    logger.info("FastAPI зависимости установлены")
+    logger.info("FastAPI зависимости установлены (инициализация произойдет при запуске сервера)")
     
-    # Инициализируем БД для FastAPI event loop (важно для PostgreSQL)
-    await init_fastapi_db()
-    logger.info("FastAPI event loop инициализирован")
-    
-    logger.info("Mini App API полностью инициализирован")
+    logger.info("Mini App API готов к запуску")
 
 
 def signal_handler(signum, frame):
