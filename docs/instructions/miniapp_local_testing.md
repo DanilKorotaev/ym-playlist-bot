@@ -454,6 +454,95 @@ docker compose exec bot bash
 docker compose ps
 ```
 
+## Перезапуск API после изменений кода
+
+### Нужно ли пересобирать API?
+
+**Да, нужно!** API использует свой Dockerfile (`miniapp/Dockerfile`) и собирается отдельно от бота. При изменении кода в:
+- `miniapp/api/*` (routes.py, server.py, main.py, auth.py)
+- `services/*` (если используется API)
+- `database/*` (если используется API)
+- `utils/*` (если используется API)
+- `yandex_client_manager.py` (если используется API)
+
+нужно пересобрать образ API.
+
+### Как правильно перезапустить API
+
+#### Вариант 1: Пересборка и перезапуск (рекомендуется)
+
+```bash
+# Пересобрать образ API
+docker compose build api
+
+# Перезапустить контейнер API
+docker compose up -d api
+```
+
+Или одной командой:
+
+```bash
+# Пересобрать и перезапустить
+docker compose up -d --build api
+```
+
+#### Вариант 2: Полная пересборка без кэша
+
+Если изменения не применяются, попробуйте пересобрать без кэша:
+
+```bash
+# Пересобрать без кэша
+docker compose build --no-cache api
+
+# Перезапустить
+docker compose up -d api
+```
+
+#### Вариант 3: Остановка, пересборка, запуск
+
+```bash
+# Остановить API
+docker compose stop api
+
+# Пересобрать образ
+docker compose build api
+
+# Запустить API
+docker compose up -d api
+```
+
+### Проверка статуса и логов
+
+```bash
+# Проверить статус API
+docker compose ps api
+
+# Посмотреть логи API
+docker compose logs -f api
+
+# Посмотреть последние 100 строк логов
+docker compose logs --tail=100 api
+```
+
+### Быстрый перезапуск без пересборки
+
+Если вы **НЕ меняли код**, а только изменили переменные окружения (например, `LOG_LEVEL`), можно просто перезапустить:
+
+```bash
+# Просто перезапустить контейнер (без пересборки)
+docker compose restart api
+```
+
+**Важно:** При изменении кода `restart` не поможет - нужна пересборка (`build`)!
+
+### Сравнение с ботом
+
+| Действие | Бот | API |
+|----------|-----|-----|
+| Изменение кода | `docker compose build bot` | `docker compose build api` |
+| Перезапуск | `docker compose up -d bot` | `docker compose up -d api` |
+| Только переменные окружения | `docker compose restart bot` | `docker compose restart api` |
+
 ## Примечания
 
 - **HTTPS обязателен** для Web Apps - Telegram требует HTTPS

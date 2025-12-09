@@ -15,7 +15,15 @@ from services.yandex_service import YandexService
 from yandex_client_manager import YandexClientManager
 from database import DatabaseInterface
 
+# Настройка логгера с учетом переменной окружения
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
+log_level = getattr(logging, LOG_LEVEL, logging.INFO)
 logger = logging.getLogger(__name__)
+logger.setLevel(log_level)
+
+# Логируем уровень при инициализации модуля (только для DEBUG)
+if log_level <= logging.DEBUG:
+    logger.debug(f"Логгер routes.py инициализирован с уровнем {LOG_LEVEL} ({log_level})")
 
 router = APIRouter()
 
@@ -389,23 +397,40 @@ def _build_streaming_url(download_info: Any) -> Optional[str]:
     Построить URL для стриминга из download_info.
     
     Args:
-        download_info: Объект download_info от API Яндекс.Музыки
+        download_info: Объект download_info от API Яндекс.Музыки (может быть объектом или списком)
         
     Returns:
         URL для стриминга или None
     """
+    # Если это список вариантов, выбираем первый (обычно лучший)
+    if isinstance(download_info, list):
+        if not download_info:
+            logger.warning("download_info - пустой список")
+            return None
+        logger.debug(f"download_info - список из {len(download_info)} вариантов, выбираю первый")
+        download_info = download_info[0]
+    
     url = None
     
     # ПРИОРИТЕТ 1: Пробуем получить через get_direct_link()
     if hasattr(download_info, "get_direct_link"):
         try:
             url = download_info.get_direct_link()
+            logger.debug(f"get_direct_link() вернул: {type(url)}, длина: {len(str(url)) if url else 0}")
+            
             # Проверяем, не является ли это XML
-            if url and (url.startswith("<?xml") or url.startswith("<download-info>")):
-                logger.warning("get_direct_link() вернул XML, требуется парсинг")
-                url = None  # Будем строить из host и path
+            if url and isinstance(url, str):
+                if url.startswith("<?xml") or url.startswith("<download-info>"):
+                    logger.warning("get_direct_link() вернул XML вместо URL, требуется парсинг")
+                    # Пробуем извлечь URL из XML
+                    url = _extract_url_from_xml(url)
+                    if not url:
+                        url = None  # Будем строить из host и path
+                elif not (url.startswith("http://") or url.startswith("https://")):
+                    logger.warning(f"get_direct_link() вернул неожиданный формат: {url[:50]}...")
+                    url = None
         except Exception as e:
-            logger.warning(f"Ошибка при вызове get_direct_link(): {e}")
+            logger.warning(f"Ошибка при вызове get_direct_link(): {e}", exc_info=True)
             url = None
     
     # ПРИОРИТЕТ 2: Если get_direct_link() не сработал, строим из host и path
@@ -413,32 +438,98 @@ def _build_streaming_url(download_info: Any) -> Optional[str]:
         host = getattr(download_info, "host", None)
         path = getattr(download_info, "path", None)
         
+        logger.debug(f"Пробую построить URL из host и path: host={type(host)}, path={type(path)}")
+        
         # Если это вложенный объект
         if not host and hasattr(download_info, "download_info"):
             nested = download_info.download_info
-            host = getattr(nested, "host", None) if nested else None
-            path = getattr(nested, "path", None) if nested else None
+            if nested:
+                host = getattr(nested, "host", None)
+                path = getattr(nested, "path", None)
+                logger.debug("Использую вложенный download_info")
+        
+        # Обработка XML в host или path
+        if isinstance(host, str) and host.startswith('<'):
+            logger.debug("host содержит XML, парсю...")
+            try:
+                root = ET.fromstring(host)
+                host_elem = root.find("host")
+                path_elem = root.find("path")
+                if host_elem is not None and path_elem is not None:
+                    host = host_elem.text
+                    path = path_elem.text
+                    logger.debug(f"Извлечено из XML: host={host[:50] if host else None}...")
+            except ET.ParseError as e:
+                logger.warning(f"Ошибка парсинга XML в host: {e}")
+        
+        if isinstance(path, str) and path.startswith('<'):
+            logger.debug("path содержит XML, парсю...")
+            try:
+                root = ET.fromstring(path)
+                host_elem = root.find("host")
+                path_elem = root.find("path")
+                if host_elem is not None and path_elem is not None:
+                    host = host_elem.text
+                    path = path_elem.text
+                    logger.debug(f"Извлечено из XML в path: host={host[:50] if host else None}...")
+            except ET.ParseError as e:
+                logger.warning(f"Ошибка парсинга XML в path: {e}")
         
         if host and path:
-            # Обработка XML, если нужно
-            if isinstance(host, str) and host.startswith('<'):
-                # Парсим XML
-                try:
-                    root = ET.fromstring(host)
-                    host_elem = root.find("host")
-                    path_elem = root.find("path")
-                    if host_elem is not None and path_elem is not None:
-                        host = host_elem.text
-                        path = path_elem.text
-                except ET.ParseError as e:
-                    logger.warning(f"Ошибка парсинга XML: {e}")
+            # Преобразуем в строки, если это не строки
+            host = str(host).strip()
+            path = str(path).strip()
             
-            if host and path:
-                if not host.startswith("http"):
-                    host = f"https://{host}"
-                url = f"{host}{path}"
+            if not host.startswith("http://") and not host.startswith("https://"):
+                host = f"https://{host}"
+            
+            url = f"{host}{path}"
+            logger.debug(f"URL построен из host и path: {url[:100]}...")
+        else:
+            logger.warning(f"Не удалось построить URL: host={host}, path={path}")
+    
+    if url:
+        logger.debug(f"Итоговый URL: {url[:100]}...")
+    else:
+        logger.error("Не удалось построить streaming URL из download_info")
+        # Логируем структуру объекта для отладки
+        if hasattr(download_info, "__dict__"):
+            logger.debug(f"Атрибуты download_info: {list(download_info.__dict__.keys())}")
     
     return url
+
+
+def _extract_url_from_xml(xml_content: str) -> Optional[str]:
+    """
+    Извлечь URL из XML содержимого.
+    
+    Args:
+        xml_content: XML строка с информацией о скачивании
+        
+    Returns:
+        URL или None, если не удалось извлечь
+    """
+    try:
+        root = ET.fromstring(xml_content)
+        host_elem = root.find("host")
+        path_elem = root.find("path")
+        
+        if host_elem is not None and path_elem is not None:
+            host = host_elem.text
+            path = path_elem.text
+            
+            if host and path:
+                if not host.startswith("http://") and not host.startswith("https://"):
+                    host = f"https://{host}"
+                url = f"{host}{path}"
+                logger.debug(f"URL извлечен из XML: {url[:100]}...")
+                return url
+    except ET.ParseError as e:
+        logger.warning(f"Ошибка парсинга XML: {e}")
+    except Exception as e:
+        logger.warning(f"Ошибка при извлечении URL из XML: {e}")
+    
+    return None
 
 
 @router.get("/tracks/{track_id}/stream")
@@ -460,34 +551,61 @@ async def get_track_stream_url(
         JSON с URL трека и временем истечения (если доступно)
     """
     try:
+        logger.debug(f"Запрос URL для трека {track_id} из плейлиста {playlist_id} (user_id={user_id})")
+        
         # Получаем клиент и сервис
         client = await client_manager.get_client_for_playlist(playlist_id)
         yandex_service = YandexService(client)
         
         # Получаем трек
+        logger.debug(f"Получаю трек {track_id}...")
         track = await asyncio.to_thread(yandex_service.get_track, track_id)
         
         if not track:
+            logger.warning(f"Трек {track_id} не найден")
             raise HTTPException(status_code=404, detail="Track not found")
         
         # Получаем download_info
-        download_info = await asyncio.to_thread(track.get_download_info)
-        
-        if not download_info:
+        logger.debug(f"Получаю download_info для трека {track_id}...")
+        try:
+            download_info = await asyncio.to_thread(track.get_download_info)
+        except AttributeError:
+            logger.error(f"Трек {track_id} не имеет метода get_download_info")
             raise HTTPException(
                 status_code=500,
-                detail="Failed to get download info for track"
+                detail="Track does not support download info"
+            )
+        except Exception as e:
+            logger.error(f"Ошибка при вызове get_download_info() для трека {track_id}: {e}", exc_info=True)
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to get download info: {str(e)}"
             )
         
+        if not download_info:
+            logger.warning(f"download_info для трека {track_id} вернул None или пустое значение")
+            raise HTTPException(
+                status_code=500,
+                detail="Failed to get download info for track (empty response)"
+            )
+        
+        logger.debug(f"download_info получен: тип={type(download_info)}")
+        
         # Строим URL
+        logger.debug(f"Строю streaming URL из download_info...")
         url = _build_streaming_url(download_info)
         
         if not url:
+            logger.error(f"Не удалось построить streaming URL для трека {track_id}")
+            # Логируем дополнительную информацию для отладки
+            if hasattr(download_info, "__dict__"):
+                logger.debug(f"Атрибуты download_info: {list(download_info.__dict__.keys())}")
             raise HTTPException(
                 status_code=500,
-                detail="Failed to build streaming URL"
+                detail="Failed to build streaming URL. Track may be unavailable or restricted."
             )
         
+        logger.info(f"Streaming URL успешно построен для трека {track_id}")
         return {
             "url": url,
             "expires_at": None  # Можно добавить, если API предоставляет время истечения
@@ -496,6 +614,6 @@ async def get_track_stream_url(
     except HTTPException:
         raise
     except Exception as e:
-        logger.exception(f"Ошибка при получении URL трека: {e}")
+        logger.exception(f"Неожиданная ошибка при получении URL трека {track_id}: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
 

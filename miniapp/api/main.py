@@ -24,6 +24,10 @@ logging.basicConfig(
     level=log_level,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
+
+# Явно устанавливаем уровень для всех логгеров miniapp.api.*
+logging.getLogger("miniapp.api").setLevel(log_level)
+
 logger = logging.getLogger(__name__)
 
 # Глобальные переменные
@@ -86,12 +90,23 @@ async def main():
         
         logger.info(f"Запуск FastAPI сервера на {api_host}:{api_port}...")
         
+        # Маппим уровни Python logging в уровни uvicorn
+        uvicorn_log_level_map = {
+            logging.DEBUG: "debug",
+            logging.INFO: "info",
+            logging.WARNING: "warning",
+            logging.ERROR: "error",
+            logging.CRITICAL: "critical"
+        }
+        uvicorn_log_level = uvicorn_log_level_map.get(log_level, "info")
+        logger.debug(f"Уровень логирования: Python={LOG_LEVEL} ({log_level}), Uvicorn={uvicorn_log_level}")
+        
         # Запускаем uvicorn
         config = uvicorn.Config(
             app,
             host=api_host,
             port=api_port,
-            log_level="info" if log_level <= logging.INFO else "warning",
+            log_level=uvicorn_log_level,
             loop="asyncio"
         )
         server = uvicorn.Server(config)
