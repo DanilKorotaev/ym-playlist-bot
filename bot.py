@@ -213,6 +213,12 @@ async def main():
             Command("buy_limit")
         )
         
+        # Команда /player
+        dp_instance.message.register(
+            command_handlers.player_command,
+            Command("player")
+        )
+        
         # Команда /cancel
         dp_instance.message.register(
             command_handlers.cancel_operation,

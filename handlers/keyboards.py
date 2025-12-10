@@ -47,7 +47,7 @@ def get_cancel_keyboard():
     )
 
 
-def get_miniapp_inline_keyboard(web_app_url: str = None):
+def get_miniapp_inline_keyboard(web_app_url: str = None, button_text: str = "🎵 Открыть плеер"):
     """
     Возвращает inline-клавиатуру с кнопкой Web App.
     Inline-кнопки более надежно передают initData в Telegram Desktop.
@@ -55,6 +55,7 @@ def get_miniapp_inline_keyboard(web_app_url: str = None):
     Args:
         web_app_url: URL для Mini App (опционально). Если не указан, 
                      берется из переменной окружения MINIAPP_URL.
+        button_text: Текст кнопки (по умолчанию "🎵 Открыть плеер").
     """
     if web_app_url is None:
         web_app_url = os.getenv("MINIAPP_URL")
@@ -66,7 +67,7 @@ def get_miniapp_inline_keyboard(web_app_url: str = None):
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="🎵 Открыть плеер",
+                    text=button_text,
                     web_app=WebAppInfo(url=web_app_url)
                 )
             ]

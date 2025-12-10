@@ -125,9 +125,10 @@ class CommandHandlers:
         # Inline-кнопки более надежно передают initData в Telegram Desktop
         if inline_keyboard:
             await message.answer(
-                "💡 <b>Альтернативный способ открыть плеер:</b>\n\n"
-                "Используйте кнопку ниже, если кнопка в меню не работает в Telegram Desktop.",
-                reply_markup=inline_keyboard
+                "🎵 <b>Музыкальный плеер</b>\n\n"
+                "Нажмите кнопку ниже, чтобы открыть плеер и выбрать плейлист для воспроизведения.",
+                reply_markup=inline_keyboard,
+                parse_mode="HTML"
             )
         
         await self.db.log_action(telegram_id, "command_start", None, None)
@@ -159,10 +160,35 @@ class CommandHandlers:
         inline_keyboard = get_miniapp_inline_keyboard()
         if inline_keyboard:
             await message.answer(
-                "💡 <b>Альтернативный способ открыть плеер:</b>\n\n"
-                "Используйте кнопку ниже, если кнопка в меню не работает в Telegram Desktop.",
-                reply_markup=inline_keyboard
+                "🎵 <b>Музыкальный плеер</b>\n\n"
+                "Нажмите кнопку ниже, чтобы открыть плеер и выбрать плейлист для воспроизведения.",
+                reply_markup=inline_keyboard,
+                parse_mode="HTML"
             )
+    
+    async def player_command(self, message: Message):
+        """Команда /player - открывает плеер."""
+        telegram_id = message.from_user.id
+        await self.db.ensure_user(telegram_id, message.from_user.username)
+        
+        from .keyboards import get_miniapp_inline_keyboard
+        inline_keyboard = get_miniapp_inline_keyboard(button_text="🎵 Открыть плеер")
+        
+        if inline_keyboard:
+            await message.answer(
+                "🎵 <b>Музыкальный плеер</b>\n\n"
+                "Нажмите кнопку ниже, чтобы открыть плеер и выбрать плейлист для воспроизведения.",
+                reply_markup=inline_keyboard,
+                parse_mode="HTML"
+            )
+        else:
+            await message.answer(
+                "❌ Плеер временно недоступен.\n\n"
+                "💡 Обратитесь к администратору.",
+                reply_markup=get_main_menu_keyboard()
+            )
+        
+        await self.db.log_action(telegram_id, "command_player", None, None)
     
     async def create_playlist_start(self, message: Message, state: FSMContext):
         """Начало создания плейлиста (FSM)."""
@@ -407,6 +433,12 @@ class CommandHandlers:
         
         # Создаем inline-кнопки для действий
         keyboard = []
+        
+        # Кнопка "Открыть в плеере" для всех, кто имеет доступ к плейлисту
+        from .keyboards import get_miniapp_inline_keyboard
+        miniapp_keyboard = get_miniapp_inline_keyboard(button_text="🎵 Открыть в плеере")
+        if miniapp_keyboard and miniapp_keyboard.inline_keyboard:
+            keyboard.append(miniapp_keyboard.inline_keyboard[0])
         
         # Кнопка "Редактировать" для создателя
         if is_creator:

@@ -361,13 +361,22 @@ class CallbackHandlers:
         insert_position = playlist.get("insert_position", "end")
         position_text = "в начало" if insert_position == "start" else "в конец"
         
-        keyboard = [
+        keyboard = []
+        
+        # Кнопка "Открыть в плеере"
+        from .keyboards import get_miniapp_inline_keyboard
+        miniapp_keyboard = get_miniapp_inline_keyboard(button_text="🎵 Открыть в плеере")
+        if miniapp_keyboard and miniapp_keyboard.inline_keyboard:
+            keyboard.append(miniapp_keyboard.inline_keyboard[0])
+        
+        # Кнопки редактирования
+        keyboard.extend([
             [InlineKeyboardButton(text="✏️ Изменить имя", callback_data=f"edit_name_{playlist_id}")],
             [InlineKeyboardButton(text="🖼️ Изменить/установить картинку", callback_data=f"set_cover_{playlist_id}")],
             [InlineKeyboardButton(text=f"📍 Добавление треков: {position_text}", callback_data=f"toggle_insert_position_{playlist_id}")],
             [InlineKeyboardButton(text="🗑️ Удалить плейлист", callback_data=f"delete_playlist_{playlist_id}")],
             [InlineKeyboardButton(text="🗑️ Удалить трек", callback_data=f"delete_track_{playlist_id}")]
-        ]
+        ])
         
         return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
