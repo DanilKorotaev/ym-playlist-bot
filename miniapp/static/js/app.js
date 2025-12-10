@@ -1,4 +1,116 @@
 /**
+ * Класс для автоматического обновления очереди плейлиста
+ */
+class PlaylistUpdater {
+    constructor(playlistId, currentRevision, queue, telegramAPI, onTracksAdded) {
+        this.playlistId = playlistId;
+        this.currentRevision = currentRevision;
+        this.queue = queue; // Объект с методами для работы с очередью
+        this.telegramAPI = telegramAPI;
+        this.onTracksAdded = onTracksAdded; // Callback при добавлении треков
+        this.checkInterval = 10000; // 10 секунд (настраивается через конфиг)
+        this.intervalId = null;
+        this.isChecking = false; // Флаг для предотвращения параллельных проверок
+    }
+    
+    /**
+     * Начать периодическую проверку обновлений
+     */
+    start() {
+        if (this.intervalId) {
+            return; // Уже запущен
+        }
+        
+        this.intervalId = setInterval(() => {
+            this.checkForUpdates();
+        }, this.checkInterval);
+        
+        console.log(`PlaylistUpdater: Запущена проверка обновлений для плейлиста ${this.playlistId} (интервал: ${this.checkInterval}ms)`);
+    }
+    
+    /**
+     * Остановить проверку обновлений
+     */
+    stop() {
+        if (this.intervalId) {
+            clearInterval(this.intervalId);
+            this.intervalId = null;
+            console.log(`PlaylistUpdater: Остановлена проверка обновлений для плейлиста ${this.playlistId}`);
+        }
+    }
+    
+    /**
+     * Обновить revision после получения обновлений
+     * @param {number} newRevision - Новая версия плейлиста
+     */
+    updateRevision(newRevision) {
+        this.currentRevision = newRevision;
+    }
+    
+    /**
+     * Проверить обновления плейлиста
+     */
+    async checkForUpdates() {
+        // Предотвращаем параллельные проверки
+        if (this.isChecking) {
+            return;
+        }
+        
+        // Проверяем, близок ли текущий трек к концу очереди
+        const currentIndex = this.queue.getCurrentIndex();
+        const queueLength = this.queue.getTracks().length;
+        const remainingTracks = queueLength - currentIndex;
+        
+        // Проверяем только если осталось 2-3 трека или меньше
+        if (remainingTracks > 3) {
+            return; // Не проверяем, если очередь еще длинная
+        }
+        
+        this.isChecking = true;
+        
+        try {
+            const response = await this.telegramAPI.apiGet(
+                `/playlists/${this.playlistId}/updates?revision=${this.currentRevision}`
+            );
+            
+            // Всегда обновляем revision, если он изменился
+            if (response.new_revision && response.new_revision !== this.currentRevision) {
+                this.currentRevision = response.new_revision;
+            }
+            
+            if (response.has_updates && response.new_tracks && response.new_tracks.length > 0) {
+                // Получаем текущие треки для сравнения
+                const currentTracks = this.queue.getTracks();
+                const currentTrackIds = new Set(currentTracks.map(t => t.id));
+                
+                // Фильтруем только новые треки (которых еще нет в очереди)
+                const newTracks = response.new_tracks.filter(track => !currentTrackIds.has(track.id));
+                
+                if (newTracks.length > 0) {
+                    // Добавляем новые треки в конец очереди
+                    this.queue.addTracks(newTracks);
+                    
+                    // Вызываем callback для уведомления
+                    if (this.onTracksAdded) {
+                        this.onTracksAdded(newTracks.length, response.new_tracks_count);
+                    }
+                    
+                    console.log(`PlaylistUpdater: Добавлено ${newTracks.length} новых треков в очередь`);
+                } else {
+                    // Обновления есть, но все треки уже в очереди (возможно, порядок изменился)
+                    console.log('PlaylistUpdater: Обновления есть, но все треки уже в очереди');
+                }
+            }
+        } catch (error) {
+            console.error('PlaylistUpdater: Ошибка при проверке обновлений:', error);
+            // Не показываем ошибку пользователю, чтобы не мешать воспроизведению
+        } finally {
+            this.isChecking = false;
+        }
+    }
+}
+
+/**
  * Основная логика приложения Mini App
  */
 class MiniApp {
@@ -9,6 +121,7 @@ class MiniApp {
         this.currentTracks = [];
         this.currentTrackIndex = 0;
         this.currentRevision = null; // Для проверки обновлений плейлиста
+        this.playlistUpdater = null; // Экземпляр PlaylistUpdater
         
         this.init();
     }
@@ -301,6 +414,12 @@ class MiniApp {
     async selectPlaylist(playlist) {
         this.currentPlaylistId = playlist.id;
         
+        // Останавливаем предыдущий updater, если он был
+        if (this.playlistUpdater) {
+            this.playlistUpdater.stop();
+            this.playlistUpdater = null;
+        }
+        
         // Показываем загрузку
         const tracksList = document.getElementById('tracks-list');
         if (tracksList) {
@@ -317,6 +436,9 @@ class MiniApp {
             // Отображаем треки
             if (data.tracks && data.tracks.length > 0) {
                 this.displayTracks(data.tracks);
+                
+                // Запускаем автоматическое обновление очереди
+                this.startPlaylistUpdater(playlist.id, data.revision);
             } else {
                 if (tracksList) {
                     tracksList.innerHTML = '<p style="text-align: center; color: #999;">Плейлист пуст</p>';
@@ -346,15 +468,25 @@ class MiniApp {
         this.currentTracks = tracks;
         this.currentTrackIndex = 0;
         
+        this.renderTracksList();
+        
+        // Показываем плеер
+        this.showPlayer();
+    }
+    
+    /**
+     * Отрендерить список треков в UI
+     */
+    renderTracksList() {
         const tracksList = document.getElementById('tracks-list');
         if (!tracksList) return;
         
         tracksList.innerHTML = '';
         
-        tracks.forEach((track, index) => {
+        this.currentTracks.forEach((track, index) => {
             const trackItem = document.createElement('div');
             trackItem.className = 'track-item';
-            if (index === 0) {
+            if (index === this.currentTrackIndex) {
                 trackItem.classList.add('active');
             }
             
@@ -407,9 +539,92 @@ class MiniApp {
             
             tracksList.appendChild(trackItem);
         });
+    }
+    
+    /**
+     * Запустить автоматическое обновление очереди плейлиста
+     * @param {number} playlistId - ID плейлиста
+     * @param {number} revision - Текущая версия плейлиста
+     */
+    startPlaylistUpdater(playlistId, revision) {
+        // Останавливаем предыдущий updater, если он был
+        if (this.playlistUpdater) {
+            this.playlistUpdater.stop();
+        }
         
-        // Показываем плеер
-        this.showPlayer();
+        // Создаем объект-обертку для работы с очередью
+        const queueWrapper = {
+            getCurrentIndex: () => this.currentTrackIndex,
+            getTracks: () => this.currentTracks,
+            addTracks: (newTracks) => this.addTracksToQueue(newTracks)
+        };
+        
+        // Создаем экземпляр PlaylistUpdater
+        this.playlistUpdater = new PlaylistUpdater(
+            playlistId,
+            revision,
+            queueWrapper,
+            this.telegramAPI,
+            (newTracksCount, totalNewTracks) => this.onTracksAdded(newTracksCount, totalNewTracks)
+        );
+        
+        // Запускаем проверку
+        this.playlistUpdater.start();
+    }
+    
+    /**
+     * Добавить новые треки в конец очереди
+     * @param {Array} newTracks - Массив новых треков
+     */
+    addTracksToQueue(newTracks) {
+        if (!newTracks || newTracks.length === 0) {
+            return;
+        }
+        
+        // Добавляем новые треки в конец очереди
+        this.currentTracks = [...this.currentTracks, ...newTracks];
+        
+        // Обновляем UI
+        this.renderTracksList();
+        
+        console.log(`MiniApp: Добавлено ${newTracks.length} новых треков в очередь. Всего треков: ${this.currentTracks.length}`);
+    }
+    
+    /**
+     * Callback при добавлении новых треков
+     * @param {number} newTracksCount - Количество добавленных треков
+     * @param {number} totalNewTracks - Общее количество новых треков в плейлисте
+     */
+    onTracksAdded(newTracksCount, totalNewTracks) {
+        // Показываем toast-уведомление
+        this.showToast(`Добавлено ${newTracksCount} новых треков`);
+        
+        // Синхронизируем revision с updater (он уже обновлен в checkForUpdates)
+        if (this.playlistUpdater) {
+            this.currentRevision = this.playlistUpdater.currentRevision;
+        }
+    }
+    
+    /**
+     * Показать toast-уведомление
+     * @param {string} message - Текст уведомления
+     * @param {number} duration - Длительность показа в миллисекундах (по умолчанию 3000)
+     */
+    showToast(message, duration = 3000) {
+        const toast = document.getElementById('toast');
+        if (!toast) return;
+        
+        toast.textContent = message;
+        toast.classList.remove('hidden');
+        toast.classList.add('show');
+        
+        // Скрываем через указанное время
+        setTimeout(() => {
+            toast.classList.remove('show');
+            setTimeout(() => {
+                toast.classList.add('hidden');
+            }, 300); // Ждем завершения анимации
+        }, duration);
     }
     
     /**
@@ -466,6 +681,16 @@ class MiniApp {
         if (this.currentTrackIndex < this.currentTracks.length - 1) {
             this.currentTrackIndex++;
             await this.loadTrack(this.currentTracks[this.currentTrackIndex]);
+        } else {
+            // Если достигли конца очереди, проверяем обновления вручную
+            if (this.playlistUpdater) {
+                await this.playlistUpdater.checkForUpdates();
+                // Если после проверки появились новые треки, переходим к следующему
+                if (this.currentTrackIndex < this.currentTracks.length - 1) {
+                    this.currentTrackIndex++;
+                    await this.loadTrack(this.currentTracks[this.currentTrackIndex]);
+                }
+            }
         }
     }
 
