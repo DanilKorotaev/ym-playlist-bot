@@ -262,15 +262,52 @@ body {
     color: var(--tg-theme-button-text-color);
 }
 
+.track-item-content {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.track-item-info {
+    flex: 1;
+    min-width: 0; /* Позволяет тексту обрезаться */
+}
+
 .track-item h4 {
     font-size: 14px;
     font-weight: 600;
     margin-bottom: 4px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .track-item p {
     font-size: 12px;
     opacity: 0.8;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.track-play-btn {
+    background-color: transparent;
+    border: none;
+    font-size: 20px;
+    cursor: pointer;
+    padding: 4px 8px;
+    border-radius: 4px;
+    transition: background-color 0.2s;
+    flex-shrink: 0;
+}
+
+.track-play-btn:hover {
+    background-color: rgba(255, 255, 255, 0.1);
+}
+
+.track-item.active .track-play-btn:hover {
+    background-color: rgba(255, 255, 255, 0.2);
 }
 
 /* Утилиты */

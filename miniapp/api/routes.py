@@ -232,10 +232,15 @@ async def get_playlist_tracks(
         # Форматируем треки
         formatted_tracks = []
         for i, track_item in enumerate(tracks):
-            track_id, track_title = yandex_service.extract_track_info(track_item)
+            track_id, _ = yandex_service.extract_track_info(track_item)
+            
+            # Получаем сам трек (может быть обернут в PlaylistTrack)
+            track_obj = track_item.track if hasattr(track_item, 'track') else track_item
+            
+            # Получаем название трека
+            track_title = getattr(track_obj, "title", None) or "Без названия"
             
             # Получаем артистов как массив
-            track_obj = track_item.track if hasattr(track_item, 'track') else track_item
             artists = []
             if getattr(track_obj, "artists", None):
                 artists = [a.name for a in getattr(track_obj, "artists", []) if getattr(a, "name", None)]
@@ -243,11 +248,25 @@ async def get_playlist_tracks(
             # Получаем длительность
             duration = getattr(track_obj, 'duration_ms', 0) // 1000
             
+            # Получаем обложку трека (из альбома или самого трека)
+            cover_url = None
+            if getattr(track_obj, 'albums', None) and len(track_obj.albums) > 0:
+                album = track_obj.albums[0]
+                if hasattr(album, 'cover_uri') and album.cover_uri:
+                    cover_uri = album.cover_uri.replace('%%', '300x300')
+                    if cover_uri.startswith('//'):
+                        cover_url = f'https:{cover_uri}'
+                    elif cover_uri.startswith('/'):
+                        cover_url = f'https://music.yandex.ru{cover_uri}'
+                    elif cover_uri.startswith('http://') or cover_uri.startswith('https://'):
+                        cover_url = cover_uri
+            
             formatted_tracks.append({
                 "id": track_id,
                 "title": track_title,
                 "artists": artists,  # Массив артистов
                 "duration": duration,
+                "cover_url": cover_url,
                 "position": i
             })
         
@@ -314,21 +333,40 @@ async def check_playlist_updates(
         # Форматируем новые треки (все треки, так как мы не знаем, какие именно новые)
         formatted_tracks = []
         for i, track_item in enumerate(tracks):
-            track_id, track_title = yandex_service.extract_track_info(track_item)
+            track_id, _ = yandex_service.extract_track_info(track_item)
+            
+            # Получаем сам трек (может быть обернут в PlaylistTrack)
+            track_obj = track_item.track if hasattr(track_item, 'track') else track_item
+            
+            # Получаем название трека
+            track_title = getattr(track_obj, "title", None) or "Без названия"
             
             # Получаем артистов как массив
-            track_obj = track_item.track if hasattr(track_item, 'track') else track_item
             artists = []
             if getattr(track_obj, "artists", None):
                 artists = [a.name for a in getattr(track_obj, "artists", []) if getattr(a, "name", None)]
             
             duration = getattr(track_obj, 'duration_ms', 0) // 1000
             
+            # Получаем обложку трека (из альбома или самого трека)
+            cover_url = None
+            if getattr(track_obj, 'albums', None) and len(track_obj.albums) > 0:
+                album = track_obj.albums[0]
+                if hasattr(album, 'cover_uri') and album.cover_uri:
+                    cover_uri = album.cover_uri.replace('%%', '300x300')
+                    if cover_uri.startswith('//'):
+                        cover_url = f'https:{cover_uri}'
+                    elif cover_uri.startswith('/'):
+                        cover_url = f'https://music.yandex.ru{cover_uri}'
+                    elif cover_uri.startswith('http://') or cover_uri.startswith('https://'):
+                        cover_url = cover_uri
+            
             formatted_tracks.append({
                 "id": track_id,
                 "title": track_title,
                 "artists": artists,  # Массив артистов
                 "duration": duration,
+                "cover_url": cover_url,
                 "position": i
             })
         

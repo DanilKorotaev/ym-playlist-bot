@@ -95,6 +95,16 @@ class Player {
         // Загрузка завершена
         this.audio.addEventListener('canplay', () => {
             this.isLoading = false;
+            if (this.onLoadedMetadata) {
+                this.onLoadedMetadata({
+                    duration: this.audio.duration
+                });
+            }
+        });
+        
+        // Загрузка завершена и можно воспроизводить
+        this.audio.addEventListener('canplaythrough', () => {
+            this.isLoading = false;
         });
     }
     

@@ -39,9 +39,51 @@ class MiniApp {
         // Небольшая задержка для завершения инициализации
         await new Promise(resolve => setTimeout(resolve, 500));
         
+        // Инициализируем Media Session API при старте (важно для iOS)
+        this.initMediaSession();
+        
         this.hideLoading();
         this.showContent();
         this.showPlaylistSelector();
+    }
+    
+    /**
+     * Инициализировать Media Session API при старте приложения
+     * Это нужно делать заранее, чтобы iOS правильно обработал кнопки
+     */
+    initMediaSession() {
+        if (!('mediaSession' in navigator)) {
+            return; // Media Session API не поддерживается
+        }
+        
+        try {
+            // КРИТИЧНО для iOS: отключаем перемотку, чтобы кнопки переключали треки
+            navigator.mediaSession.setActionHandler('seekbackward', null);
+            navigator.mediaSession.setActionHandler('seekforward', null);
+            
+            // Устанавливаем переключение треков
+            navigator.mediaSession.setActionHandler('previoustrack', async () => {
+                await this.playPrevious();
+            });
+            
+            navigator.mediaSession.setActionHandler('nexttrack', async () => {
+                await this.playNext();
+            });
+            
+            navigator.mediaSession.setActionHandler('play', async () => {
+                if (this.player) {
+                    await this.player.play();
+                }
+            });
+            
+            navigator.mediaSession.setActionHandler('pause', () => {
+                if (this.player) {
+                    this.player.pause();
+                }
+            });
+        } catch (error) {
+            console.warn('Ошибка при инициализации Media Session:', error);
+        }
     }
     
     initPlayer() {
@@ -51,10 +93,14 @@ class MiniApp {
         // Настраиваем обработчики событий плеера
         this.player.onPlay = () => {
             this.updatePlayPauseButton(true);
+            this.updateActiveTrack(); // Обновляем кнопки в списке
+            this.updateMediaSessionPlaybackState();
         };
         
         this.player.onPause = () => {
             this.updatePlayPauseButton(false);
+            this.updateActiveTrack(); // Обновляем кнопки в списке
+            this.updateMediaSessionPlaybackState();
         };
         
         this.player.onTimeUpdate = (data) => {
@@ -77,6 +123,8 @@ class MiniApp {
         
         this.player.onLoadedMetadata = (data) => {
             this.updateTotalTime(data.duration);
+            // Обновляем кнопку после загрузки метаданных
+            this.updatePlayPauseButton(this.player.getIsPlaying(), false);
         };
     }
 
@@ -315,15 +363,47 @@ class MiniApp {
             const artistsText = Array.isArray(track.artists) 
                 ? track.artists.join(', ') 
                 : (track.artists || 'Неизвестный артист');
+            
+            // Определяем иконку кнопки play/pause
+            const isCurrentTrack = index === this.currentTrackIndex;
+            const isPlaying = isCurrentTrack && this.player && this.player.getIsPlaying();
+            const playPauseIcon = isPlaying ? '⏸' : '▶';
+            
             trackItem.innerHTML = `
-                <h4>${this.escapeHtml(track.title || 'Без названия')}</h4>
-                <p>${this.escapeHtml(artistsText)} • ${duration}</p>
+                <div class="track-item-content">
+                    <div class="track-item-info">
+                        <h4>${this.escapeHtml(track.title || 'Без названия')}</h4>
+                        <p>${this.escapeHtml(artistsText)} • ${duration}</p>
+                    </div>
+                    <button class="track-play-btn" data-track-index="${index}">${playPauseIcon}</button>
+                </div>
             `;
             
-            trackItem.addEventListener('click', () => {
+            // Обработчик клика на трек
+            trackItem.addEventListener('click', (e) => {
+                // Если клик по кнопке play/pause, не переключаем трек
+                if (e.target.classList.contains('track-play-btn') || e.target.closest('.track-play-btn')) {
+                    return;
+                }
                 this.currentTrackIndex = index;
                 this.loadTrack(track);
             });
+            
+            // Обработчик клика на кнопку play/pause
+            const playBtn = trackItem.querySelector('.track-play-btn');
+            if (playBtn) {
+                playBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    if (index === this.currentTrackIndex) {
+                        // Если это текущий трек, переключаем play/pause
+                        this.togglePlayPause();
+                    } else {
+                        // Иначе переключаемся на этот трек
+                        this.currentTrackIndex = index;
+                        this.loadTrack(track);
+                    }
+                });
+            }
             
             tracksList.appendChild(trackItem);
         });
@@ -407,6 +487,9 @@ class MiniApp {
         
         // Обновляем активный трек в списке
         this.updateActiveTrack();
+        
+        // Обновляем Media Session для нативного плеера
+        this.updateMediaSession(track);
         
         // Если URL уже есть (например, был получен ранее), используем его
         if (track.url) {
@@ -513,11 +596,96 @@ class MiniApp {
         
         // Убираем класс active со всех треков
         const trackItems = tracksList.querySelectorAll('.track-item');
-        trackItems.forEach(item => item.classList.remove('active'));
+        trackItems.forEach((item, index) => {
+            item.classList.remove('active');
+            
+            // Обновляем кнопку play/pause
+            const playBtn = item.querySelector('.track-play-btn');
+            if (playBtn) {
+                const isCurrentTrack = index === this.currentTrackIndex;
+                const isPlaying = isCurrentTrack && this.player && this.player.getIsPlaying();
+                playBtn.textContent = isCurrentTrack && isPlaying ? '⏸' : '▶';
+            }
+        });
         
         // Добавляем класс active текущему треку
         if (trackItems[this.currentTrackIndex]) {
             trackItems[this.currentTrackIndex].classList.add('active');
+            // Обновляем кнопку для текущего трека
+            const playBtn = trackItems[this.currentTrackIndex].querySelector('.track-play-btn');
+            if (playBtn) {
+                const isPlaying = this.player && this.player.getIsPlaying();
+                playBtn.textContent = isPlaying ? '⏸' : '▶';
+            }
+        }
+    }
+    
+    /**
+     * Обновить Media Session для нативного плеера (iOS, Android)
+     * Позволяет отображать информацию о треке на экране блокировки
+     */
+    updateMediaSession(track) {
+        if (!('mediaSession' in navigator)) {
+            return; // Media Session API не поддерживается
+        }
+        
+        const artistsText = Array.isArray(track.artists) 
+            ? track.artists.join(', ') 
+            : (track.artists || 'Неизвестный артист');
+        
+        // Устанавливаем метаданные трека
+        navigator.mediaSession.metadata = new MediaMetadata({
+            title: track.title || 'Без названия',
+            artist: artistsText,
+            album: '', // Можно добавить, если будет доступно
+            artwork: track.cover_url ? [
+                { src: track.cover_url, sizes: '512x512', type: 'image/jpeg' }
+            ] : []
+        });
+        
+        // На iOS нужно переустанавливать обработчики при каждом обновлении трека
+        // чтобы кнопки работали правильно
+        try {
+            // Отключаем перемотку (критично для iOS)
+            navigator.mediaSession.setActionHandler('seekbackward', null);
+            navigator.mediaSession.setActionHandler('seekforward', null);
+            
+            // Устанавливаем переключение треков
+            navigator.mediaSession.setActionHandler('previoustrack', async () => {
+                await this.playPrevious();
+            });
+            
+            navigator.mediaSession.setActionHandler('nexttrack', async () => {
+                await this.playNext();
+            });
+            
+            navigator.mediaSession.setActionHandler('play', async () => {
+                await this.player.play();
+            });
+            
+            navigator.mediaSession.setActionHandler('pause', () => {
+                this.player.pause();
+            });
+        } catch (error) {
+            console.warn('Ошибка при обновлении обработчиков Media Session:', error);
+        }
+        
+        // Обновляем состояние воспроизведения
+        this.updateMediaSessionPlaybackState();
+    }
+    
+    /**
+     * Обновить состояние воспроизведения в Media Session
+     */
+    updateMediaSessionPlaybackState() {
+        if (!('mediaSession' in navigator)) {
+            return;
+        }
+        
+        if (this.player && this.player.getIsPlaying()) {
+            navigator.mediaSession.playbackState = 'playing';
+        } else {
+            navigator.mediaSession.playbackState = 'paused';
         }
     }
 }
