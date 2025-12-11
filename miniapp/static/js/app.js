@@ -123,6 +123,11 @@ class MiniApp {
         this.currentRevision = null; // Для проверки обновлений плейлиста
         this.playlistUpdater = null; // Экземпляр PlaylistUpdater
         
+        // Режимы воспроизведения
+        this.isShuffled = false;
+        this.repeatMode = 'none'; // 'none', 'all', 'one'
+        this.shuffledIndices = []; // Индексы треков в перемешанном порядке
+        
         this.init();
     }
 
@@ -140,6 +145,9 @@ class MiniApp {
             return;
         }
 
+        // Инициализируем тему Telegram
+        this.initTheme();
+        
         // Инициализируем плеер
         this.initPlayer();
         
@@ -158,6 +166,78 @@ class MiniApp {
         this.hideLoading();
         this.showContent();
         this.showPlaylistSelector();
+    }
+    
+    /**
+     * Инициализировать тему Telegram
+     */
+    initTheme() {
+        if (!this.telegramAPI.webApp) return;
+        
+        const webApp = this.telegramAPI.webApp;
+        const colorScheme = webApp.colorScheme || 'light';
+        
+        // Применяем тему к body
+        if (colorScheme === 'dark') {
+            document.body.classList.add('theme-dark');
+            
+            // Устанавливаем CSS переменные из Telegram API
+            const themeParams = webApp.themeParams || {};
+            if (themeParams.bg_color) {
+                document.documentElement.style.setProperty('--tg-dark-bg-color', themeParams.bg_color);
+            }
+            if (themeParams.text_color) {
+                document.documentElement.style.setProperty('--tg-dark-text-color', themeParams.text_color);
+            }
+            if (themeParams.hint_color) {
+                document.documentElement.style.setProperty('--tg-dark-hint-color', themeParams.hint_color);
+            }
+            if (themeParams.link_color) {
+                document.documentElement.style.setProperty('--tg-dark-link-color', themeParams.link_color);
+            }
+            if (themeParams.button_color) {
+                document.documentElement.style.setProperty('--tg-dark-button-color', themeParams.button_color);
+            }
+            if (themeParams.button_text_color) {
+                document.documentElement.style.setProperty('--tg-dark-button-text-color', themeParams.button_text_color);
+            }
+            if (themeParams.secondary_bg_color) {
+                document.documentElement.style.setProperty('--tg-dark-secondary-bg-color', themeParams.secondary_bg_color);
+            }
+        } else {
+            document.body.classList.remove('theme-dark');
+            
+            // Устанавливаем CSS переменные для светлой темы
+            const themeParams = webApp.themeParams || {};
+            if (themeParams.bg_color) {
+                document.documentElement.style.setProperty('--tg-theme-bg-color', themeParams.bg_color);
+            }
+            if (themeParams.text_color) {
+                document.documentElement.style.setProperty('--tg-theme-text-color', themeParams.text_color);
+            }
+            if (themeParams.hint_color) {
+                document.documentElement.style.setProperty('--tg-theme-hint-color', themeParams.hint_color);
+            }
+            if (themeParams.link_color) {
+                document.documentElement.style.setProperty('--tg-theme-link-color', themeParams.link_color);
+            }
+            if (themeParams.button_color) {
+                document.documentElement.style.setProperty('--tg-theme-button-color', themeParams.button_color);
+            }
+            if (themeParams.button_text_color) {
+                document.documentElement.style.setProperty('--tg-theme-button-text-color', themeParams.button_text_color);
+            }
+            if (themeParams.secondary_bg_color) {
+                document.documentElement.style.setProperty('--tg-theme-secondary-bg-color', themeParams.secondary_bg_color);
+            }
+        }
+        
+        // Слушаем изменения темы
+        if (webApp.onEvent) {
+            webApp.onEvent('themeChanged', () => {
+                this.initTheme();
+            });
+        }
     }
     
     /**
@@ -203,6 +283,9 @@ class MiniApp {
         // Создаем экземпляр плеера
         this.player = new Player();
         
+        // Устанавливаем максимальную громкость (управление громкостью через системные настройки)
+        this.player.setVolume(1.0);
+        
         // Настраиваем обработчики событий плеера
         this.player.onPlay = () => {
             this.updatePlayPauseButton(true);
@@ -221,8 +304,14 @@ class MiniApp {
         };
         
         this.player.onEnded = () => {
-            // Автоматически переходим к следующему треку
-            this.playNext();
+            // Обрабатываем окончание трека в зависимости от режима повтора
+            if (this.repeatMode === 'one') {
+                // Повторяем текущий трек
+                this.loadTrack(this.currentTracks[this.currentTrackIndex]);
+            } else {
+                // Переходим к следующему треку
+                this.playNext();
+            }
         };
         
         this.player.onError = (error) => {
@@ -246,6 +335,8 @@ class MiniApp {
         const playPauseBtn = document.getElementById('play-pause-btn');
         const prevBtn = document.getElementById('prev-btn');
         const nextBtn = document.getElementById('next-btn');
+        const shuffleBtn = document.getElementById('shuffle-btn');
+        const repeatBtn = document.getElementById('repeat-btn');
 
         if (playPauseBtn) {
             playPauseBtn.addEventListener('click', () => this.togglePlayPause());
@@ -259,10 +350,19 @@ class MiniApp {
             nextBtn.addEventListener('click', () => this.playNext());
         }
         
+        if (shuffleBtn) {
+            shuffleBtn.addEventListener('click', () => this.toggleShuffle());
+        }
+        
+        if (repeatBtn) {
+            repeatBtn.addEventListener('click', () => this.toggleRepeat());
+        }
+        
         // Прогресс-бар для перемотки
         const progressBar = document.querySelector('.progress-bar');
         if (progressBar) {
             progressBar.addEventListener('click', (e) => this.handleProgressBarClick(e));
+            progressBar.addEventListener('mousedown', (e) => this.handleProgressBarMouseDown(e));
         }
     }
     
@@ -284,6 +384,125 @@ class MiniApp {
             this.player.seek(newTime);
         }
     }
+    
+    /**
+     * Обработать начало перетаскивания прогресс-бара
+     * @param {Event} e - Событие mousedown
+     */
+    handleProgressBarMouseDown(e) {
+        const progressBar = e.currentTarget;
+        progressBar.classList.add('dragging');
+        
+        const handleMouseMove = (moveEvent) => {
+            if (!this.player) return;
+            
+            const rect = progressBar.getBoundingClientRect();
+            const clickX = moveEvent.clientX - rect.left;
+            const percentage = Math.max(0, Math.min(1, clickX / rect.width));
+            
+            const duration = this.player.getDuration();
+            if (duration > 0) {
+                const newTime = duration * percentage;
+                this.player.seek(newTime);
+            }
+        };
+        
+        const handleMouseUp = () => {
+            progressBar.classList.remove('dragging');
+            document.removeEventListener('mousemove', handleMouseMove);
+            document.removeEventListener('mouseup', handleMouseUp);
+        };
+        
+        document.addEventListener('mousemove', handleMouseMove);
+        document.addEventListener('mouseup', handleMouseUp);
+        
+        // Также обрабатываем клик
+        this.handleProgressBarClick(e);
+    }
+    
+    /**
+     * Переключить режим перемешивания
+     */
+    toggleShuffle() {
+        this.isShuffled = !this.isShuffled;
+        this.updateShuffleButton();
+        
+        if (this.isShuffled) {
+            this.shuffleTracks();
+        } else {
+            this.shuffledIndices = [];
+        }
+    }
+    
+    /**
+     * Перемешать треки
+     */
+    shuffleTracks() {
+        this.shuffledIndices = Array.from({ length: this.currentTracks.length }, (_, i) => i);
+        
+        // Алгоритм Fisher-Yates для перемешивания
+        for (let i = this.shuffledIndices.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [this.shuffledIndices[i], this.shuffledIndices[j]] = [this.shuffledIndices[j], this.shuffledIndices[i]];
+        }
+        
+        // Находим текущий трек в перемешанном списке
+        const currentOriginalIndex = this.currentTrackIndex;
+        const shuffledIndex = this.shuffledIndices.indexOf(currentOriginalIndex);
+        if (shuffledIndex !== -1) {
+            // Перемещаем текущий трек в начало перемешанного списка
+            this.shuffledIndices.splice(shuffledIndex, 1);
+            this.shuffledIndices.unshift(currentOriginalIndex);
+        }
+    }
+    
+    /**
+     * Обновить кнопку перемешивания
+     */
+    updateShuffleButton() {
+        const shuffleBtn = document.getElementById('shuffle-btn');
+        if (shuffleBtn) {
+            if (this.isShuffled) {
+                shuffleBtn.classList.add('active');
+                shuffleBtn.title = 'Перемешивание включено';
+            } else {
+                shuffleBtn.classList.remove('active');
+                shuffleBtn.title = 'Перемешать';
+            }
+        }
+    }
+    
+    /**
+     * Переключить режим повтора
+     */
+    toggleRepeat() {
+        const modes = ['none', 'all', 'one'];
+        const currentIndex = modes.indexOf(this.repeatMode);
+        this.repeatMode = modes[(currentIndex + 1) % modes.length];
+        this.updateRepeatButton();
+    }
+    
+    /**
+     * Обновить кнопку повтора
+     */
+    updateRepeatButton() {
+        const repeatBtn = document.getElementById('repeat-btn');
+        if (repeatBtn) {
+            repeatBtn.classList.remove('active');
+            if (this.repeatMode === 'all') {
+                repeatBtn.classList.add('active');
+                repeatBtn.textContent = '↻';
+            } else if (this.repeatMode === 'one') {
+                repeatBtn.classList.add('active');
+                repeatBtn.textContent = '↻';
+                repeatBtn.title = 'Повтор одного трека';
+            } else {
+                repeatBtn.textContent = '↻';
+                repeatBtn.title = 'Повтор';
+            }
+        }
+    }
+    
 
     showLoading() {
         const loading = document.getElementById('loading');
@@ -394,9 +613,21 @@ class MiniApp {
         playlists.forEach(playlist => {
             const playlistItem = document.createElement('div');
             playlistItem.className = 'playlist-item';
+            
+            const coverHtml = playlist.cover_url 
+                ? `<img src="${this.escapeHtml(playlist.cover_url)}" alt="Обложка плейлиста" class="playlist-cover" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';" />`
+                : '';
+            const coverPlaceholder = playlist.cover_url 
+                ? `<div class="playlist-cover-placeholder" style="display: none;">🎵</div>`
+                : `<div class="playlist-cover-placeholder">🎵</div>`;
+            
             playlistItem.innerHTML = `
-                <h3>${this.escapeHtml(playlist.title || 'Без названия')}</h3>
-                <p>${playlist.track_count || 0} треков ${playlist.is_shared ? '(Общий)' : ''}</p>
+                ${coverHtml}
+                ${coverPlaceholder}
+                <div class="playlist-item-info">
+                    <h3>${this.escapeHtml(playlist.title || 'Без названия')}</h3>
+                    <p>${playlist.track_count || 0} треков ${playlist.is_shared ? '(Общий)' : ''}</p>
+                </div>
             `;
             
             playlistItem.addEventListener('click', () => {
@@ -468,6 +699,13 @@ class MiniApp {
         this.currentTracks = tracks;
         this.currentTrackIndex = 0;
         
+        // Сбрасываем режимы воспроизведения при загрузке нового плейлиста
+        this.isShuffled = false;
+        this.repeatMode = 'none';
+        this.shuffledIndices = [];
+        this.updateShuffleButton();
+        this.updateRepeatButton();
+        
         this.renderTracksList();
         
         // Показываем плеер
@@ -501,13 +739,24 @@ class MiniApp {
             const isPlaying = isCurrentTrack && this.player && this.player.getIsPlaying();
             const playPauseIcon = isPlaying ? '⏸' : '▶';
             
+            const coverHtml = track.cover_url 
+                ? `<img src="${this.escapeHtml(track.cover_url)}" alt="Обложка трека" class="track-item-cover" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';" />`
+                : '';
+            const coverPlaceholder = track.cover_url 
+                ? `<div class="track-item-cover-placeholder" style="display: none;">🎵</div>`
+                : `<div class="track-item-cover-placeholder">🎵</div>`;
+            
             trackItem.innerHTML = `
                 <div class="track-item-content">
-                    <div class="track-item-info">
-                        <h4>${this.escapeHtml(track.title || 'Без названия')}</h4>
-                        <p>${this.escapeHtml(artistsText)} • ${duration}</p>
+                    ${coverHtml}
+                    ${coverPlaceholder}
+                    <div class="track-item-content-with-cover">
+                        <div class="track-item-info">
+                            <h4>${this.escapeHtml(track.title || 'Без названия')}</h4>
+                            <p>${this.escapeHtml(artistsText)} • ${duration}</p>
+                        </div>
+                        <button class="track-play-btn" data-track-index="${index}">${playPauseIcon}</button>
                     </div>
-                    <button class="track-play-btn" data-track-index="${index}">${playPauseIcon}</button>
                 </div>
             `;
             
@@ -663,33 +912,92 @@ class MiniApp {
             if (isPlaying) {
                 btn.classList.add('playing');
                 btn.textContent = '⏸';
+                btn.title = 'Пауза';
             } else {
                 btn.classList.remove('playing');
                 btn.textContent = '▶';
+                btn.title = 'Воспроизвести';
             }
         }
     }
 
     async playPrevious() {
-        if (this.currentTrackIndex > 0) {
-            this.currentTrackIndex--;
-            await this.loadTrack(this.currentTracks[this.currentTrackIndex]);
+        if (this.isShuffled && this.shuffledIndices.length > 0) {
+            // Находим текущий трек в перемешанном списке
+            const currentOriginalIndex = this.currentTrackIndex;
+            const shuffledIndex = this.shuffledIndices.indexOf(currentOriginalIndex);
+            
+            if (shuffledIndex > 0) {
+                // Переходим к предыдущему треку в перемешанном списке
+                const prevOriginalIndex = this.shuffledIndices[shuffledIndex - 1];
+                this.currentTrackIndex = prevOriginalIndex;
+                await this.loadTrack(this.currentTracks[this.currentTrackIndex]);
+            } else if (this.repeatMode === 'all') {
+                // Если включен повтор, переходим к последнему треку
+                const lastOriginalIndex = this.shuffledIndices[this.shuffledIndices.length - 1];
+                this.currentTrackIndex = lastOriginalIndex;
+                await this.loadTrack(this.currentTracks[this.currentTrackIndex]);
+            }
+        } else {
+            // Обычный режим
+            if (this.currentTrackIndex > 0) {
+                this.currentTrackIndex--;
+                await this.loadTrack(this.currentTracks[this.currentTrackIndex]);
+            } else if (this.repeatMode === 'all') {
+                // Если включен повтор, переходим к последнему треку
+                this.currentTrackIndex = this.currentTracks.length - 1;
+                await this.loadTrack(this.currentTracks[this.currentTrackIndex]);
+            }
         }
     }
 
     async playNext() {
-        if (this.currentTrackIndex < this.currentTracks.length - 1) {
-            this.currentTrackIndex++;
-            await this.loadTrack(this.currentTracks[this.currentTrackIndex]);
+        if (this.isShuffled && this.shuffledIndices.length > 0) {
+            // Находим текущий трек в перемешанном списке
+            const currentOriginalIndex = this.currentTrackIndex;
+            const shuffledIndex = this.shuffledIndices.indexOf(currentOriginalIndex);
+            
+            if (shuffledIndex < this.shuffledIndices.length - 1) {
+                // Переходим к следующему треку в перемешанном списке
+                const nextOriginalIndex = this.shuffledIndices[shuffledIndex + 1];
+                this.currentTrackIndex = nextOriginalIndex;
+                await this.loadTrack(this.currentTracks[this.currentTrackIndex]);
+            } else if (this.repeatMode === 'all') {
+                // Если включен повтор, переходим к первому треку
+                const firstOriginalIndex = this.shuffledIndices[0];
+                this.currentTrackIndex = firstOriginalIndex;
+                await this.loadTrack(this.currentTracks[this.currentTrackIndex]);
+            } else {
+                // Проверяем обновления плейлиста
+                await this.checkForMoreTracks();
+            }
         } else {
-            // Если достигли конца очереди, проверяем обновления вручную
-            if (this.playlistUpdater) {
-                await this.playlistUpdater.checkForUpdates();
-                // Если после проверки появились новые треки, переходим к следующему
-                if (this.currentTrackIndex < this.currentTracks.length - 1) {
-                    this.currentTrackIndex++;
-                    await this.loadTrack(this.currentTracks[this.currentTrackIndex]);
-                }
+            // Обычный режим
+            if (this.currentTrackIndex < this.currentTracks.length - 1) {
+                this.currentTrackIndex++;
+                await this.loadTrack(this.currentTracks[this.currentTrackIndex]);
+            } else if (this.repeatMode === 'all') {
+                // Если включен повтор, переходим к первому треку
+                this.currentTrackIndex = 0;
+                await this.loadTrack(this.currentTracks[this.currentTrackIndex]);
+            } else {
+                // Проверяем обновления плейлиста
+                await this.checkForMoreTracks();
+            }
+        }
+    }
+    
+    /**
+     * Проверить наличие новых треков в плейлисте
+     */
+    async checkForMoreTracks() {
+        // Если достигли конца очереди, проверяем обновления вручную
+        if (this.playlistUpdater) {
+            await this.playlistUpdater.checkForUpdates();
+            // Если после проверки появились новые треки, переходим к следующему
+            if (this.currentTrackIndex < this.currentTracks.length - 1) {
+                this.currentTrackIndex++;
+                await this.loadTrack(this.currentTracks[this.currentTrackIndex]);
             }
         }
     }
@@ -702,6 +1010,8 @@ class MiniApp {
         // Обновляем UI с информацией о треке
         const trackTitle = document.getElementById('track-title');
         const trackArtist = document.getElementById('track-artist');
+        const trackCover = document.getElementById('track-cover');
+        const trackCoverPlaceholder = document.querySelector('.track-cover-placeholder');
         
         if (trackTitle) trackTitle.textContent = track.title || '-';
         // Безопасная обработка артистов (может быть массивом или строкой)
@@ -709,6 +1019,36 @@ class MiniApp {
             ? track.artists.join(', ') 
             : (track.artists || '-');
         if (trackArtist) trackArtist.textContent = artistsText;
+        
+        // Обновляем обложку трека
+        if (trackCover && trackCoverPlaceholder) {
+            if (track.cover_url) {
+                // Устанавливаем обработчики до изменения src
+                trackCover.onload = () => {
+                    trackCover.style.display = 'block';
+                    trackCoverPlaceholder.style.display = 'none';
+                };
+                trackCover.onerror = () => {
+                    trackCover.style.display = 'none';
+                    trackCoverPlaceholder.style.display = 'flex';
+                };
+                // Устанавливаем src - это запустит загрузку
+                trackCover.src = track.cover_url;
+                // Если изображение уже загружено (из кеша), onload может не сработать
+                if (trackCover.complete && trackCover.naturalWidth > 0) {
+                    trackCover.style.display = 'block';
+                    trackCoverPlaceholder.style.display = 'none';
+                } else {
+                    // Показываем placeholder пока загружается
+                    trackCover.style.display = 'none';
+                    trackCoverPlaceholder.style.display = 'flex';
+                }
+            } else {
+                trackCover.src = '';
+                trackCover.style.display = 'none';
+                trackCoverPlaceholder.style.display = 'flex';
+            }
+        }
         
         // Обновляем активный трек в списке
         this.updateActiveTrack();

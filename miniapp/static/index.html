@@ -28,19 +28,26 @@
 
                 <div id="player-section" class="player-section hidden">
                     <div class="current-track">
+                        <div class="track-cover-container">
+                            <img id="track-cover" class="track-cover" src="" alt="Обложка трека" />
+                            <div class="track-cover-placeholder">🎵</div>
+                        </div>
                         <h3 id="track-title">-</h3>
                         <p id="track-artist">-</p>
                     </div>
 
                     <div class="player-controls">
-                        <button id="prev-btn" class="control-btn">◄◄</button>
-                        <button id="play-pause-btn" class="control-btn play-btn">▶</button>
-                        <button id="next-btn" class="control-btn">►►</button>
+                        <button id="shuffle-btn" class="control-btn secondary" title="Перемешать">⇄</button>
+                        <button id="prev-btn" class="control-btn" title="Предыдущий">⏮</button>
+                        <button id="play-pause-btn" class="control-btn play-btn" title="Воспроизвести/Пауза">▶</button>
+                        <button id="next-btn" class="control-btn" title="Следующий">⏭</button>
+                        <button id="repeat-btn" class="control-btn secondary" title="Повтор">↻</button>
                     </div>
 
                     <div class="progress-container">
                         <div class="progress-bar">
                             <div id="progress" class="progress"></div>
+                            <div id="progress-handle" class="progress-handle"></div>
                         </div>
                         <div class="time-info">
                             <span id="current-time">0:00</span>
