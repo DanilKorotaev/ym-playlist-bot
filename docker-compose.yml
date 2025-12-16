@@ -98,9 +98,12 @@ services:
     container_name: ym_bot_nginx
     ports:
       - "80:80"
+      - "443:443"  # HTTPS порт (для стейджа/прода с SSL)
     volumes:
       - ./miniapp/static:/usr/share/nginx/html:ro
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      # Раскомментируйте для использования SSL (после генерации сертификата)
+      # - /etc/nginx/ssl:/etc/nginx/ssl:ro
     depends_on:
       - bot
       - api

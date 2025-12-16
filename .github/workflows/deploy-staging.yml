@@ -1,0 +1,147 @@
+name: Deploy to Staging
+
+on:
+  push:
+    branches:
+      - staging
+      - develop
+      - feature/*  # Можно развертывать feature ветки на стейдж
+  workflow_dispatch:  # Ручной запуск
+    inputs:
+      branch:
+        description: 'Branch to deploy'
+        required: false
+        default: 'staging'
+
+jobs:
+  deploy-staging:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.branch || github.ref }}
+      
+      - name: Deploy to staging server
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          host: ${{ secrets.STAGING_DEPLOY_HOST }}
+          username: ${{ secrets.STAGING_DEPLOY_USER }}
+          key: ${{ secrets.STAGING_DEPLOY_SSH_KEY }}
+          port: ${{ secrets.STAGING_DEPLOY_PORT || 22 }}
+          script: |
+            set -e  # Остановка при ошибке
+            
+            echo "🚀 Начало развертывания на стейдж..."
+            
+            # Определение ветки для развертывания
+            DEPLOY_BRANCH="${{ github.event.inputs.branch || 'staging' }}"
+            if [ "${{ github.event_name }}" = "push" ]; then
+              DEPLOY_BRANCH="${GITHUB_REF#refs/heads/}"
+            fi
+            
+            echo "📌 Ветка для развертывания: $DEPLOY_BRANCH"
+            
+            # Переход в директорию проекта
+            cd ${{ secrets.STAGING_DEPLOY_PATH }}
+            
+            # Сохранение текущей версии (для отката)
+            CURRENT_VERSION=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+            echo "📌 Текущая версия: $CURRENT_VERSION"
+            echo "$CURRENT_VERSION" > .deploy_version || true
+            
+            # Обновление кода
+            echo "📥 Обновление кода из репозитория..."
+            git fetch origin
+            
+            # Переключение на нужную ветку
+            if git show-ref --verify --quiet refs/heads/$DEPLOY_BRANCH; then
+              git checkout $DEPLOY_BRANCH
+              git reset --hard origin/$DEPLOY_BRANCH
+            else
+              git checkout -b $DEPLOY_BRANCH origin/$DEPLOY_BRANCH || true
+              git reset --hard origin/$DEPLOY_BRANCH
+            fi
+            
+            git clean -fd
+            
+            # Проверка изменений
+            NEW_VERSION=$(git rev-parse --short HEAD)
+            echo "📌 Новая версия: $NEW_VERSION"
+            
+            # Сборка Docker-образов
+            echo "🔨 Сборка Docker-образов..."
+            docker compose build bot api
+            
+            # Остановка старых контейнеров
+            echo "⏹️ Остановка старых контейнеров..."
+            docker compose stop bot api || true
+            
+            # Удаление старых контейнеров (опционально)
+            echo "🗑️ Удаление старых контейнеров..."
+            docker compose rm -f bot api || true
+            
+            # Запуск новых контейнеров
+            echo "▶️ Запуск новых контейнеров..."
+            docker compose up -d bot api
+            
+            # Перезапуск nginx (если нужно)
+            echo "🔄 Перезапуск nginx..."
+            docker compose restart nginx || true
+            
+            # Ожидание запуска контейнеров
+            echo "⏳ Ожидание запуска контейнеров..."
+            sleep 10
+            
+            # Проверка статуса контейнеров
+            echo "✅ Проверка статуса контейнеров..."
+            docker compose ps
+            
+            # Проверка логов на ошибки
+            echo "📋 Проверка логов..."
+            
+            # Проверка логов бота
+            if docker compose logs --tail=50 bot 2>/dev/null | grep -i "error\|exception\|traceback"; then
+              echo "⚠️ Обнаружены ошибки в логах бота!"
+              docker compose logs --tail=100 bot
+              # Не прерываем выполнение для стейджа, только предупреждаем
+            fi
+            
+            # Проверка логов API
+            if docker compose logs --tail=50 api 2>/dev/null | grep -i "error\|exception\|traceback"; then
+              echo "⚠️ Обнаружены ошибки в логах API!"
+              docker compose logs --tail=100 api
+              # Не прерываем выполнение для стейджа, только предупреждаем
+            fi
+            
+            # Проверка доступности API
+            echo "🔍 Проверка доступности API..."
+            sleep 5
+            if curl -f http://localhost:8000/docs > /dev/null 2>&1; then
+              echo "✅ API доступен"
+            else
+              echo "⚠️ API недоступен, проверьте логи"
+            fi
+            
+            echo "✅ Развертывание на стейдж завершено!"
+            echo "📌 Версия: $NEW_VERSION"
+            echo "📌 Ветка: $DEPLOY_BRANCH"
+      
+      - name: Send notification (optional)
+        if: always()
+        continue-on-error: true
+        uses: appleboy/telegram-action@v1.0.0
+        with:
+          to: ${{ secrets.TELEGRAM_NOTIFICATION_CHAT_ID }}
+          token: ${{ secrets.TELEGRAM_NOTIFICATION_TOKEN }}
+          message: |
+            ${{ job.status == 'success' && '✅' || '❌' }} Деплой на стейдж завершен
+            
+            Статус: ${{ job.status }}
+            Версия: ${{ github.sha }}
+            Ветка: ${{ github.event.inputs.branch || github.ref_name }}
+            Коммит: ${{ github.event.head_commit.message || 'Manual trigger' }}
+            Автор: ${{ github.event.head_commit.author.name || 'Manual' }}
+
