@@ -95,11 +95,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
 
 # Создаем FastAPI приложение с lifespan
+# root_path нужен для работы за прокси (nginx добавляет префикс /api)
 app = FastAPI(
     title="Mini App API",
     description="REST API для Telegram Mini App",
     version="1.0.0",
-    lifespan=lifespan
+    lifespan=lifespan,
+    root_path="/api"  # Префикс, который добавляет nginx при проксировании
 )
 
 # Глобальный обработчик исключений

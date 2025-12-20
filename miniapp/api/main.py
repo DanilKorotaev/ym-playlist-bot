@@ -98,12 +98,14 @@ async def main():
         logger.debug(f"Уровень логирования: Python={LOG_LEVEL} ({log_level}), Uvicorn={uvicorn_log_level}")
         
         # Запускаем uvicorn
+        # root_path нужен для работы за прокси (nginx добавляет префикс /api)
         config = uvicorn.Config(
             app,
             host=api_host,
             port=api_port,
             log_level=uvicorn_log_level,
-            loop="asyncio"
+            loop="asyncio",
+            root_path="/api"  # Префикс, который добавляет nginx при проксировании
         )
         server = uvicorn.Server(config)
         await server.serve()
