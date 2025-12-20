@@ -343,11 +343,37 @@ class TelegramAPI {
             ...options.headers
         };
         
-        // Выполняем запрос
-        const response = await fetch(url, {
-            ...options,
-            headers
-        });
+        // Выполняем запрос с обработкой ошибок
+        let response;
+        try {
+            response = await fetch(url, {
+                ...options,
+                headers
+            });
+        } catch (error) {
+            // Обработка ошибок сети/SSL
+            console.error('Ошибка при выполнении запроса:', error);
+            
+            if (error.name === 'TypeError' && error.message.includes('Failed to fetch')) {
+                // Проблема с сетью или SSL
+                const isHttps = url.startsWith('https://');
+                const errorMsg = isHttps
+                    ? 'Ошибка подключения к серверу.\n\n' +
+                      'Возможные причины:\n' +
+                      '1. Невалидный SSL сертификат (самоподписанный)\n' +
+                      '2. Проблемы с сетью\n' +
+                      '3. Сервер недоступен\n\n' +
+                      'Для стейджа с самоподписанным сертификатом:\n' +
+                      'Telegram может блокировать загрузку. Попробуйте:\n' +
+                      '1. Использовать Cloudflare Tunnel вместо самоподписанного сертификата\n' +
+                      '2. Или получить валидный SSL сертификат (Let\'s Encrypt)'
+                    : 'Ошибка подключения к серверу. Убедитесь, что используется HTTPS.';
+                
+                throw new Error(errorMsg);
+            }
+            
+            throw error;
+        }
         
         // Проверяем статус ответа
         if (!response.ok) {

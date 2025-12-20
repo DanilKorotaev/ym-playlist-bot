@@ -132,40 +132,52 @@ class MiniApp {
     }
 
     async init() {
-        // Ждем инициализации Telegram API
-        let attempts = 0;
-        while (!this.telegramAPI.isAvailable() && attempts < 50) {
-            await new Promise(resolve => setTimeout(resolve, 100));
-            attempts++;
-        }
-        
-        // Проверяем доступность Telegram API
-        if (!this.telegramAPI.isAvailable()) {
-            this.showError('Telegram Web App API не доступен. Откройте приложение через Telegram.');
-            return;
-        }
+        try {
+            console.log('MiniApp: Начало инициализации...');
+            
+            // Ждем инициализации Telegram API
+            let attempts = 0;
+            while (!this.telegramAPI.isAvailable() && attempts < 50) {
+                await new Promise(resolve => setTimeout(resolve, 100));
+                attempts++;
+            }
+            
+            // Проверяем доступность Telegram API
+            if (!this.telegramAPI.isAvailable()) {
+                console.error('MiniApp: Telegram Web App API не доступен');
+                this.showError('Telegram Web App API не доступен. Откройте приложение через Telegram.');
+                return;
+            }
+            
+            console.log('MiniApp: Telegram API доступен');
 
-        // Инициализируем тему Telegram
-        this.initTheme();
-        
-        // Инициализируем плеер
-        this.initPlayer();
-        
-        // Инициализируем UI
-        this.setupEventListeners();
-        
-        // Показываем загрузку
-        this.showLoading();
-        
-        // Небольшая задержка для завершения инициализации
-        await new Promise(resolve => setTimeout(resolve, 500));
-        
-        // Инициализируем Media Session API при старте (важно для iOS)
-        this.initMediaSession();
-        
-        this.hideLoading();
-        this.showContent();
-        this.showPlaylistSelector();
+            // Инициализируем тему Telegram
+            this.initTheme();
+            
+            // Инициализируем плеер
+            this.initPlayer();
+            
+            // Инициализируем UI
+            this.setupEventListeners();
+            
+            // Показываем загрузку
+            this.showLoading();
+            
+            // Небольшая задержка для завершения инициализации
+            await new Promise(resolve => setTimeout(resolve, 500));
+            
+            // Инициализируем Media Session API при старте (важно для iOS)
+            this.initMediaSession();
+            
+            console.log('MiniApp: Инициализация завершена, загрузка плейлистов...');
+            
+            this.hideLoading();
+            this.showContent();
+            this.showPlaylistSelector();
+        } catch (error) {
+            console.error('MiniApp: Критическая ошибка при инициализации:', error);
+            this.showError(`Ошибка инициализации: ${error.message}\n\nПроверьте консоль браузера для деталей.`);
+        }
     }
     
     /**
