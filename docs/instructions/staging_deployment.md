@@ -421,7 +421,38 @@ curl -k https://YOUR_SERVER_IP/
 # Должна вернуться HTML страница Mini App
 ```
 
-### 5.3. Обновление MINIAPP_URL
+### 5.3. Анализ логов PostgreSQL
+
+При первом запуске PostgreSQL вы можете увидеть следующие предупреждения в логах:
+
+#### Предупреждение о locale (не критично)
+
+```
+sh: locale: not found
+WARNING: no usable system locales were found
+```
+
+**Причина:** В Alpine-образе PostgreSQL отсутствуют системные локали.
+
+**Влияние:** Минимальное. База данных работает нормально, но сортировка может отличаться от ожидаемой.
+
+**Решение:** Для стейджа можно игнорировать. Для production можно добавить локали в Dockerfile PostgreSQL.
+
+#### Предупреждение о trust authentication (не критично)
+
+```
+initdb: warning: enabling "trust" authentication for local connections
+```
+
+**Причина:** По умолчанию PostgreSQL использует "trust" аутентификацию для локальных подключений.
+
+**Влияние:** Для внутренней сети Docker это нормально и безопасно, так как контейнеры изолированы.
+
+**Решение:** Для стейджа можно оставить как есть. Для production рекомендуется настроить парольную аутентификацию.
+
+**Важно:** Все предупреждения не критичны и не мешают работе базы данных. PostgreSQL успешно запущен и готов к работе.
+
+### 5.4. Обновление MINIAPP_URL
 
 После успешного запуска обновите `MINIAPP_URL` в `.env`:
 
@@ -515,6 +546,7 @@ docker compose logs -f
 docker compose logs -f bot
 docker compose logs -f api
 docker compose logs -f nginx
+docker compose logs -f postgres
 ```
 
 ### Остановка/запуск
@@ -576,6 +608,14 @@ docker compose down -v
 - Проверьте логи PostgreSQL: `docker compose logs postgres`
 - Проверьте переменные окружения `DB_*` в `.env`
 - Проверьте, что база данных создана (должна создаться автоматически)
+- Проверьте предупреждения в логах (см. раздел 5.3) - они не критичны
+
+### Проблема 5: Предупреждения в логах PostgreSQL
+
+**Решение:**
+- Предупреждения о locale и trust authentication не критичны
+- База данных работает нормально
+- Для production можно настроить более строгую аутентификацию
 
 ---
 
@@ -610,6 +650,7 @@ sudo ufw allow from YOUR_IP to any port 443
 - [ ] nginx настроен с SSL
 - [ ] docker-compose.yml обновлен
 - [ ] Контейнеры запущены и работают
+- [ ] Логи PostgreSQL проверены (предупреждения не критичны)
 - [ ] `MINIAPP_URL` обновлен в `.env`
 - [ ] Бот перезапущен
 - [ ] Mini App открывается в Telegram
@@ -630,6 +671,5 @@ sudo ufw allow from YOUR_IP to any port 443
 ---
 
 **Документ создан:** 2025-12-11  
-**Версия:** 1.0  
+**Версия:** 1.1  
 **Автор:** AI Agent
-

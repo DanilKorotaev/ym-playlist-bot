@@ -133,7 +133,8 @@ app.add_middleware(
 )
 
 # Подключаем роуты API
-app.include_router(router, prefix="/api")
+# Префикс /api не нужен, т.к. nginx уже добавляет его при проксировании
+app.include_router(router)
 
 
 def init_app(db: DatabaseInterface, client_manager: YandexClientManager):
