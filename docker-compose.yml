@@ -100,8 +100,9 @@ services:
     volumes:
       - ./miniapp/static:/usr/share/nginx/html:ro
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-      # Раскомментируйте для использования SSL (после генерации сертификата)
-      # - /etc/nginx/ssl:/etc/nginx/ssl:ro
+      # SSL сертификаты (для стейджа/прода)
+      # После генерации сертификата через scripts/generate_ssl_cert.sh
+      - /etc/nginx/ssl:/etc/nginx/ssl:ro
     depends_on:
       - bot
       - api

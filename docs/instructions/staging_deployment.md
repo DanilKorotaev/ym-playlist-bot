@@ -234,20 +234,16 @@ sudo certbot --nginx -d your-domain.com
 
 ## Шаг 4: Настройка nginx с SSL
 
-### 4.1. Обновление конфигурации nginx
+### 4.1. Конфигурация nginx
 
-**Вариант 1: Использование готовой SSL конфигурации (рекомендуется)**
+**Конфигурация nginx уже готова для использования SSL!**
 
-В проекте уже есть готовая конфигурация с SSL: `nginx/nginx-ssl.conf`. Скопируйте её:
+Файл `nginx/nginx.conf` уже содержит:
+- Редирект HTTP (порт 80) на HTTPS (порт 443)
+- HTTPS сервер с поддержкой SSL
+- Правильную маршрутизацию API с удалением префикса `/api`
 
-```bash
-# Из директории проекта
-cp nginx/nginx-ssl.conf nginx/nginx.conf
-```
-
-**Вариант 2: Создание конфигурации вручную**
-
-Создайте или обновите файл `nginx/nginx.conf`:
+**Никаких изменений в `nginx/nginx.conf` не требуется!** Просто сгенерируйте SSL сертификат (см. Шаг 3) и запустите контейнеры.
 
 ```nginx
 events {
@@ -337,38 +333,15 @@ http {
 }
 ```
 
-### 4.2. Обновление docker-compose.yml
+### 4.2. docker-compose.yml
 
-Убедитесь, что nginx имеет доступ к SSL сертификатам. В `docker-compose.yml` раскомментируйте строку с монтированием SSL:
+**Конфигурация docker-compose.yml уже готова!**
 
-```yaml
-nginx:
-  image: nginx:alpine
-  container_name: ym_bot_nginx
-  ports:
-    - "80:80"
-    - "443:443"  # HTTPS порт
-  volumes:
-    - ./miniapp/static:/usr/share/nginx/html:ro
-    - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-    - /etc/nginx/ssl:/etc/nginx/ssl:ro  # Раскомментируйте эту строку
-  depends_on:
-    - bot
-    - api
-  networks:
-    - bot_network
-  restart: unless-stopped
-```
+Файл `docker-compose.yml` уже содержит:
+- Монтирование SSL сертификатов: `/etc/nginx/ssl:/etc/nginx/ssl:ro`
+- Порт 443 для HTTPS
 
-**Или отредактируйте файл напрямую:**
-
-```bash
-# Откройте docker-compose.yml
-nano docker-compose.yml
-
-# Найдите секцию nginx и раскомментируйте строку:
-# - /etc/nginx/ssl:/etc/nginx/ssl:ro
-```
+**Никаких изменений в `docker-compose.yml` не требуется!** Просто сгенерируйте SSL сертификат (см. Шаг 3) и запустите контейнеры.
 
 ---
 
