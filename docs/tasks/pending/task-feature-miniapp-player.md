@@ -844,6 +844,10 @@ class PlaylistUpdater {
 
 ## Получение SSL сертификата
 
+**⚠️ ВАЖНО:** Для работы Mini App в Telegram необходим валидный SSL сертификат. Самоподписанные сертификаты не работают.
+
+**Подробная инструкция по получению домена и настройке Let's Encrypt:** См. [`docs/instructions/domain_and_letsencrypt_setup.md`](../../instructions/domain_and_letsencrypt_setup.md)
+
 ### Для разработки (локально)
 
 **Используем ngrok** - самый простой способ получить HTTPS для разработки:
@@ -883,6 +887,20 @@ class PlaylistUpdater {
 ### Для продакшена (Let's Encrypt)
 
 **Let's Encrypt** - бесплатный SSL сертификат, автоматическое обновление.
+
+**📖 Полная инструкция:** См. [`docs/instructions/domain_and_letsencrypt_setup.md`](../../instructions/domain_and_letsencrypt_setup.md)
+
+**Краткая инструкция:**
+
+1. **Зарегистрируйте домен** (например, через Reg.ru, Timeweb)
+2. **Настройте DNS записи** (A-запись на IP вашего сервера)
+3. **Получите Let's Encrypt сертификат:**
+   ```bash
+   # Используйте автоматический скрипт
+   sudo ./scripts/setup_letsencrypt.sh your-domain.com
+   ```
+4. **Обновите конфигурацию nginx** для использования Let's Encrypt сертификатов
+5. **Обновите MINIAPP_URL** в `.env`: `https://your-domain.com`
 
 #### Вариант 1: Certbot (рекомендуется)
 

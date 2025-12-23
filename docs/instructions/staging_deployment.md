@@ -218,17 +218,28 @@ cloudflared tunnel --url http://localhost:80
 
 Скопируйте полученный HTTPS URL и используйте его в `MINIAPP_URL`.
 
-### Вариант 3: Использование домена (если появится)
+### Вариант 3: Использование домена с Let's Encrypt (рекомендуется для продакшена)
 
-Если у вас есть домен, настройте Let's Encrypt:
+**⚠️ ВАЖНО:** Самоподписанные сертификаты не работают с Telegram Mini Apps. Для корректной работы необходим валидный SSL сертификат от Let's Encrypt.
 
-```bash
-# Установка certbot
-sudo apt install certbot python3-certbot-nginx
+**Подробная инструкция:** См. [`domain_and_letsencrypt_setup.md`](domain_and_letsencrypt_setup.md)
 
-# Получение сертификата
-sudo certbot --nginx -d your-domain.com
-```
+**Краткая инструкция:**
+
+1. **Зарегистрируйте домен** (например, через Reg.ru, Timeweb)
+2. **Настройте DNS записи** (A-запись на IP вашего сервера)
+3. **Получите Let's Encrypt сертификат:**
+   ```bash
+   # Используйте автоматический скрипт
+   sudo ./scripts/setup_letsencrypt.sh your-domain.com
+   
+   # Или вручную
+   sudo apt install certbot python3-certbot-nginx
+   sudo certbot certonly --standalone -d your-domain.com
+   ```
+4. **Обновите конфигурацию nginx** (см. [`domain_and_letsencrypt_setup.md`](domain_and_letsencrypt_setup.md), раздел 5)
+5. **Обновите docker-compose.yml** для монтирования `/etc/letsencrypt`
+6. **Обновите MINIAPP_URL** в `.env`: `https://your-domain.com`
 
 ---
 
