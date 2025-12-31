@@ -157,7 +157,7 @@ async def wait_for_db(db, max_retries: int = 30, retry_delay: int = 2):
             await conn.close()
             logger.info("PostgreSQL готов к работе")
             return
-        except (asyncpg.exceptions.ConnectionRefusedError, 
+        except (asyncpg.exceptions.ConnectionFailureError,
                 ConnectionRefusedError,
                 asyncio.TimeoutError,
                 OSError) as e:
