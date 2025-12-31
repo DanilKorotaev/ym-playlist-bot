@@ -123,6 +123,59 @@ async def error_handler(event, *args, **kwargs):
         logger.error(f"Ошибка при отправке сообщения об ошибке: {e}")
 
 
+async def wait_for_db(db, max_retries: int = 30, retry_delay: int = 2):
+    """
+    Ожидание готовности базы данных с повторными попытками подключения.
+    
+    Args:
+        db: Экземпляр базы данных
+        max_retries: Максимальное количество попыток (по умолчанию 30 = 60 секунд)
+        retry_delay: Задержка между попытками в секундах (по умолчанию 2)
+    
+    Raises:
+        Exception: Если не удалось подключиться после всех попыток
+    """
+    import asyncpg
+    
+    # Получаем параметры подключения
+    if hasattr(db, 'connection_params'):
+        conn_params = db.connection_params
+    else:
+        # Для SQLite не нужны retry, так как это файловая БД
+        logger.info("Используется SQLite, пропускаем ожидание готовности БД")
+        return
+    
+    logger.info(f"Ожидание готовности PostgreSQL на {conn_params['host']}:{conn_params['port']}...")
+    
+    for attempt in range(1, max_retries + 1):
+        try:
+            # Пытаемся создать простое соединение для проверки
+            conn = await asyncio.wait_for(
+                asyncpg.connect(**conn_params),
+                timeout=5
+            )
+            await conn.close()
+            logger.info("PostgreSQL готов к работе")
+            return
+        except (asyncpg.exceptions.ConnectionRefusedError, 
+                ConnectionRefusedError,
+                asyncio.TimeoutError,
+                OSError) as e:
+            if attempt < max_retries:
+                logger.warning(
+                    f"Попытка {attempt}/{max_retries}: PostgreSQL еще не готов "
+                    f"({type(e).__name__}), повтор через {retry_delay} сек..."
+                )
+                await asyncio.sleep(retry_delay)
+            else:
+                logger.error(f"Не удалось подключиться к PostgreSQL после {max_retries} попыток")
+                raise
+        except Exception as e:
+            # Другие ошибки (например, неправильные credentials) не требуют retry
+            logger.error(f"Ошибка подключения к PostgreSQL: {e}")
+            raise
+
+
 def signal_handler(signum, frame):
     """Обработчик сигналов для корректного завершения."""
     logger.info(f"Получен сигнал {signum}, завершаю работу бота...")
@@ -143,6 +196,9 @@ async def main():
         
         logger.info("Запуск бота...")
         logger.info(f"TELEGRAM_TOKEN установлен: {'Да' if TELEGRAM_TOKEN else 'Нет'}")
+        
+        # Ожидаем готовности БД (для PostgreSQL с retry-логикой)
+        await wait_for_db(db)
         
         # Инициализируем БД асинхронно
         await db.init_db()

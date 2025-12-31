@@ -11,10 +11,12 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
-      interval: 10s
+      # Проверяем не только готовность принять соединения, но и возможность выполнить запрос
+      test: ["CMD-SHELL", "pg_isready -U postgres && psql -U postgres -c 'SELECT 1' -d ${POSTGRES_DB:-yandex_music_bot} > /dev/null 2>&1"]
+      interval: 5s
       timeout: 5s
-      retries: 5
+      retries: 10
+      start_period: 10s
     networks:
       - bot_network
 
